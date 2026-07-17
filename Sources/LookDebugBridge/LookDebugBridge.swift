@@ -40,23 +40,16 @@ public final class LookDebugBridge {
 
         let manager = (connectionManagerClass as AnyObject)
             .perform(NSSelectorFromString("sharedInstance"))?
-            .takeUnretainedValue() as? NSObject
-        guard let manager else {
+            .takeUnretainedValue()
+        guard manager != nil else {
             print("LookinServer manager not available")
             return
         }
 
-        // LookinServer 1.2.8 normally starts listening from UIApplicationDidBecomeActive.
-        // If the bridge is initialized after that notification, explicitly restore the
-        // active state and ask the existing manager to search its device port range.
-        manager.setValue(true, forKey: "applicationIsActive")
-        let listenSelector = NSSelectorFromString("searchPortToListenIfNoConnection")
-        guard manager.responds(to: listenSelector) else {
-            print("LookinServer listen selector not available")
-            return
-        }
-        manager.perform(listenSelector)
-        print("LookinServer listen requested")
+        // LookinServer owns listener startup through UIApplication lifecycle events.
+        // Triggering its private search method here races with didBecomeActive and can
+        // move the listener from 47175 to 47176 while iproxy still forwards 47175.
+        print("LookinServer loaded; listener follows app lifecycle")
     }
 
     private func currentViewController() -> UIViewController? {
