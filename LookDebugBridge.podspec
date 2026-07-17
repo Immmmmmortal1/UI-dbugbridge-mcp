@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name = "LookDebugBridge"
-  s.version = "0.1.0"
+  s.version = "0.1.1"
   s.summary = "A debug-only HTTP action bridge for AI-driven iOS UI inspection and control."
   s.description = <<-DESC
     LookDebugBridge pairs with LookinServer and lookdebug-mcp. LookinServer is used
