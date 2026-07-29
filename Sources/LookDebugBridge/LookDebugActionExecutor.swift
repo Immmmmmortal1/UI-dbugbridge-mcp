@@ -10,7 +10,13 @@ struct LookDebugActionExecutor {
     let registry: LookDebugElementRegistry
 
     func validateTappable(id: String) throws {
-        let view = try tappableView(id: id)
+        guard let entry = registry.entry(for: id),
+              let view = entry.view else {
+            throw LookDebugActionExecutorError.elementNotFound
+        }
+        if entry.hasTapAction {
+            return
+        }
         if view is UISwitch ||
             view is UICollectionViewCell ||
             view is UITableViewCell ||
@@ -21,7 +27,14 @@ struct LookDebugActionExecutor {
     }
 
     func tap(id: String) throws {
-        let view = try tappableView(id: id)
+        guard let entry = registry.entry(for: id),
+              let view = entry.view else {
+            throw LookDebugActionExecutorError.elementNotFound
+        }
+
+        if entry.performTapActionIfAvailable() {
+            return
+        }
 
         if let switchControl = view as? UISwitch {
             switchControl.setOn(!switchControl.isOn, animated: true)

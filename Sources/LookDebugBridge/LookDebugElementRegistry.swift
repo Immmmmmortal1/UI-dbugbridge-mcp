@@ -9,12 +9,14 @@ public final class LookDebugElementRegistry {
         private let id: String
         private let type: LookDebugElementType
         private let label: String
+        private let tapAction: (() -> Void)?
 
-        init(view: UIView, id: String, type: LookDebugElementType, label: String) {
+        init(view: UIView, id: String, type: LookDebugElementType, label: String, tapAction: (() -> Void)?) {
             self.view = view
             self.id = id
             self.type = type
             self.label = label
+            self.tapAction = tapAction
         }
 
         var metadata: LookDebugElementMetadata {
@@ -24,6 +26,16 @@ public final class LookDebugElementRegistry {
                 label: label,
                 enabled: currentEnabled
             )
+        }
+
+        var hasTapAction: Bool {
+            tapAction != nil
+        }
+
+        func performTapActionIfAvailable() -> Bool {
+            guard let tapAction else { return false }
+            tapAction()
+            return true
         }
 
         private var currentEnabled: Bool {
@@ -36,8 +48,14 @@ public final class LookDebugElementRegistry {
 
     private var entries: [String: Entry] = [:]
 
-    public func register(view: UIView, id: String, type: LookDebugElementType, label: String) {
-        entries[id] = Entry(view: view, id: id, type: type, label: label)
+    public func register(
+        view: UIView,
+        id: String,
+        type: LookDebugElementType,
+        label: String,
+        tapAction: (() -> Void)? = nil
+    ) {
+        entries[id] = Entry(view: view, id: id, type: type, label: label, tapAction: tapAction)
     }
 
     func entry(for id: String) -> Entry? {

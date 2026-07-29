@@ -28,6 +28,8 @@ struct LookDebugPageProvider {
             title = viewController.title ?? String(describing: type(of: viewController))
         }
 
+        registerContainedTabBarControllerElements(in: viewController, registry: registry)
+
         scanRoots(for: viewController).enumerated().forEach { index, rootView in
             registerAccessibilityElements(
                 in: rootView,
@@ -104,6 +106,67 @@ struct LookDebugPageProvider {
                 path: path + [pathComponent(for: subview, index: index)],
                 ancestorVisible: isVisible
             )
+        }
+    }
+
+    private func registerContainedTabBarControllerElements(
+        in viewController: UIViewController,
+        registry: LookDebugElementRegistry
+    ) {
+        for tabBarController in tabBarControllers(containedIn: viewController) where tabBarController.view.window != nil {
+            registerTabBarControllerElements(tabBarController, registry: registry)
+        }
+    }
+
+    private func tabBarControllers(containedIn viewController: UIViewController) -> [UITabBarController] {
+        var result: [UITabBarController] = []
+        if let tabBarController = viewController as? UITabBarController {
+            result.append(tabBarController)
+        }
+        for child in viewController.children {
+            result.append(contentsOf: tabBarControllers(containedIn: child))
+        }
+        return result
+    }
+
+    private func registerTabBarControllerElements(
+        _ tabBarController: UITabBarController,
+        registry: LookDebugElementRegistry
+    ) {
+        guard let viewControllers = tabBarController.viewControllers else { return }
+
+        for (index, target) in viewControllers.enumerated() {
+            let item = target.tabBarItem
+            let rawTitle = item?.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = rawTitle?.isEmpty == false ? rawTitle! : "Tab \(index)"
+            var ids = [
+                "tabbarviewcontroller.tabbar.item\(index)"
+            ]
+
+            if let title = rawTitle, !title.isEmpty {
+                ids.append("tabbarviewcontroller.tabbar.\(normalizedComponent(title))")
+            }
+
+            if let itemID = sanitizedID(item?.accessibilityIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)),
+               !itemID.isEmpty {
+                ids.append(itemID)
+            }
+
+            for id in Set(ids) {
+                registry.register(
+                    view: tabBarController.view,
+                    id: id,
+                    type: .button,
+                    label: title
+                ) { [weak tabBarController, weak target] in
+                    guard let tabBarController, let target else { return }
+                    if tabBarController.delegate?.tabBarController?(tabBarController, shouldSelect: target) == false {
+                        return
+                    }
+                    tabBarController.selectedIndex = index
+                    tabBarController.delegate?.tabBarController?(tabBarController, didSelect: target)
+                }
+            }
         }
     }
 
