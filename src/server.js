@@ -1,7 +1,9 @@
 import { loadConfig } from "./config.js";
+import { runEnvironmentPreflight } from "./environmentPreflight.js";
 import { HTTPBridgeClient } from "./httpBridgeClient.js";
 import { LookinClient } from "./lookinClient.js";
 import { PortForwarder } from "./portForwarder.js";
+import { XcodeConsoleReader } from "./xcodeConsoleReader.js";
 import {
   buildRuntimeAuditReport,
   writeJSONArtifact,
@@ -12,6 +14,7 @@ const config = loadConfig();
 const bridgeClient = new HTTPBridgeClient({ baseURL: config.bridgeBaseURL });
 const lookinClient = new LookinClient(config);
 const portForwarder = new PortForwarder(config);
+const xcodeConsoleReader = new XcodeConsoleReader();
 
 const DEFAULT_PAGE_TIMEOUT_MS = 8000;
 const DEFAULT_PAGE_INTERVAL_MS = 300;
@@ -437,6 +440,36 @@ const tools = [
     },
   },
   {
+    name: "read_xcode_console",
+    description: "Read and filter the existing Xcode Debug Console on demand without duplicating or persisting logs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional case-insensitive substring. Returns the most recent matches." },
+        tailLines: { type: "integer", minimum: 1, maximum: 2000, description: "Lines returned when query is absent. Defaults to 100." },
+        maxResults: { type: "integer", minimum: 1, maximum: 500, description: "Maximum matching lines. Defaults to 100." },
+        maxCharsPerLine: { type: "integer", minimum: 1, maximum: 10000, description: "Maximum characters returned per line. Defaults to 2000." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "wait_xcode_console",
+    description: "Wait for new Xcode Debug Console lines after the call starts; stores only a transient character offset.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional case-insensitive substring to wait for." },
+        tailLines: { type: "integer", minimum: 1, maximum: 2000, description: "New lines returned when query is absent. Defaults to 100." },
+        maxResults: { type: "integer", minimum: 1, maximum: 500, description: "Maximum matching lines. Defaults to 100." },
+        maxCharsPerLine: { type: "integer", minimum: 1, maximum: 10000, description: "Maximum characters returned per line. Defaults to 2000." },
+        timeoutMs: { type: "integer", minimum: 0, maximum: 120000, description: "Maximum wait time. Defaults to 30000." },
+        intervalMs: { type: "integer", minimum: 250, maximum: 10000, description: "Polling interval. Defaults to 1000." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "get_screenshot",
     description: "Capture a screenshot using the configured screenshot command.",
     inputSchema: {
@@ -802,24 +835,25 @@ async function runFlow(steps) {
 }
 
 async function dispatchTool(name, args) {
+  const preflight = await runEnvironmentPreflight({
+    config,
+    portForwarder,
+    bridgeClient,
+    lookinClient,
+    xcodeConsoleReader,
+  });
+
+  if (name === "ping" || !preflight.success) {
+    return makeToolResult("lookdebug_environment_preflight", preflight);
+  }
+
   switch (name) {
-    case "ping": {
-      const [bridge, lookin] = await Promise.all([bridgeClient.ping(), lookinClient.ping()]);
-      return makeToolResult("lookdebug", {
-        success: bridge.ok && lookin.success,
-        payload: {
-          debugBridge: {
-            ok: bridge.ok,
-            status: bridge.status,
-            payload: bridge.payload,
-          },
-          lookin,
-        },
-        error: bridge.ok && lookin.success ? null : "lookdebug_ping_failed",
-      });
-    }
     case "ensure_ports":
       return makeToolResult("iproxy", await portForwarder.ensureAll());
+    case "read_xcode_console":
+      return makeToolResult("xcode_debug_console", await xcodeConsoleReader.read(args));
+    case "wait_xcode_console":
+      return makeToolResult("xcode_debug_console", await xcodeConsoleReader.wait(args));
     case "inspect_ui":
       return makeToolResult("lookin_cli", await lookinClient.getUIHierarchy(args));
     case "get_debug_page":
@@ -1060,9 +1094,7 @@ async function dispatchTool(name, args) {
 }
 
 function writeMessage(message) {
-  const body = Buffer.from(JSON.stringify(message), "utf8");
-  process.stdout.write(`Content-Length: ${body.length}\r\n\r\n`);
-  process.stdout.write(body);
+  process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
 function writeResponse(id, result) {
@@ -1121,6 +1153,27 @@ async function handleMessage(message) {
 
 function consumeBuffer() {
   while (true) {
+    const firstByte = buffer.findIndex((byte) => ![9, 10, 13, 32].includes(byte));
+    if (firstByte === -1) {
+      buffer = Buffer.alloc(0);
+      return;
+    }
+    if (firstByte > 0) {
+      buffer = buffer.slice(firstByte);
+    }
+
+    if (buffer[0] === 0x7b) {
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) {
+        return;
+      }
+      const messageBytes = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 1);
+      const message = JSON.parse(messageBytes.toString("utf8"));
+      void handleMessage(message);
+      continue;
+    }
+
     const separatorIndex = buffer.indexOf("\r\n\r\n");
     if (separatorIndex === -1) {
       return;
