@@ -4,6 +4,7 @@ import { HTTPBridgeClient } from "./httpBridgeClient.js";
 import { LookinClient } from "./lookinClient.js";
 import { PortForwarder } from "./portForwarder.js";
 import { XcodeConsoleReader } from "./xcodeConsoleReader.js";
+import { XcodeRunner } from "./xcodeRunner.js";
 import {
   buildRuntimeAuditReport,
   writeJSONArtifact,
@@ -15,10 +16,20 @@ const bridgeClient = new HTTPBridgeClient({ baseURL: config.bridgeBaseURL });
 const lookinClient = new LookinClient(config);
 const portForwarder = new PortForwarder(config);
 const xcodeConsoleReader = new XcodeConsoleReader();
+const xcodeRunner = new XcodeRunner();
 
 const DEFAULT_PAGE_TIMEOUT_MS = 8000;
 const DEFAULT_PAGE_INTERVAL_MS = 300;
 const DEFAULT_POST_ACTION_WAIT_MS = 350;
+const DEFAULT_XCODE_READY_TIMEOUT_MS = 60000;
+const DEFAULT_XCODE_READY_INTERVAL_MS = 1000;
+const DEFAULT_XCODE_READY_QUERY = "LookDebugBridge ready";
+const PREFLIGHT_BOOTSTRAP_TOOLS = new Set([
+  "ensure_ports",
+  "read_xcode_console",
+  "wait_xcode_console",
+  "run_xcode_active_scheme",
+]);
 
 const tools = [
   {
@@ -36,6 +47,42 @@ const tools = [
     inputSchema: {
       type: "object",
       properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "run_xcode_active_scheme",
+    description: "Bring Xcode to the front and run the currently selected scheme with Command+R, keeping Xcode Console/Debugger in the same user-visible session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        activateDelayMs: {
+          type: "integer",
+          minimum: 0,
+          maximum: 5000,
+          description: "Delay after activating Xcode before sending Command+R. Defaults to 500.",
+        },
+        waitForReady: {
+          type: "boolean",
+          description: "Wait for a fresh Xcode Console ready marker after Command+R. Defaults to true.",
+        },
+        readyQuery: {
+          type: "string",
+          description: "Console substring that proves the debug runtime started. Defaults to LookDebugBridge ready.",
+        },
+        readyTimeoutMs: {
+          type: "integer",
+          minimum: 0,
+          maximum: 120000,
+          description: "Maximum time to wait for readyQuery. Defaults to 60000.",
+        },
+        readyIntervalMs: {
+          type: "integer",
+          minimum: 250,
+          maximum: 10000,
+          description: "Polling interval while waiting for readyQuery. Defaults to 1000.",
+        },
+      },
       additionalProperties: false,
     },
   },
@@ -835,21 +882,47 @@ async function runFlow(steps) {
 }
 
 async function dispatchTool(name, args) {
-  const preflight = await runEnvironmentPreflight({
-    config,
-    portForwarder,
-    bridgeClient,
-    lookinClient,
-    xcodeConsoleReader,
-  });
+  const shouldRunPreflight = name === "ping" || !PREFLIGHT_BOOTSTRAP_TOOLS.has(name);
+  const preflight = shouldRunPreflight
+    ? await runEnvironmentPreflight({
+        config,
+        portForwarder,
+        bridgeClient,
+        lookinClient,
+        xcodeConsoleReader,
+      })
+    : null;
 
-  if (name === "ping" || !preflight.success) {
+  if (name === "ping" || preflight?.success === false) {
     return makeToolResult("lookdebug_environment_preflight", preflight);
   }
 
   switch (name) {
     case "ensure_ports":
       return makeToolResult("iproxy", await portForwarder.ensureAll());
+    case "run_xcode_active_scheme": {
+      const runResult = await xcodeRunner.runActiveScheme(args);
+      if (!runResult.success || args.waitForReady === false) {
+        return makeToolResult("xcode_active_scheme_runner", runResult);
+      }
+
+      const readyResult = await xcodeConsoleReader.wait({
+        query: args.readyQuery || DEFAULT_XCODE_READY_QUERY,
+        timeoutMs: args.readyTimeoutMs ?? DEFAULT_XCODE_READY_TIMEOUT_MS,
+        intervalMs: args.readyIntervalMs ?? DEFAULT_XCODE_READY_INTERVAL_MS,
+        maxResults: 20,
+        maxCharsPerLine: 4000,
+      });
+      const readyMatched = readyResult.success && readyResult.payload?.status === "matched";
+      return makeToolResult("xcode_active_scheme_runner", {
+        success: readyMatched,
+        payload: {
+          run: runResult.payload,
+          ready: readyResult.payload,
+        },
+        error: readyMatched ? null : readyResult.error || "xcode_run_ready_marker_timeout",
+      });
+    }
     case "read_xcode_console":
       return makeToolResult("xcode_debug_console", await xcodeConsoleReader.read(args));
     case "wait_xcode_console":

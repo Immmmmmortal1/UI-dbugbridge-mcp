@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Thin MCP wrapper for LookinServer and the in-app debug HTTP bridge.",
   "scripts": {
-    "build": "node --check src/config.js && node --check src/environmentPreflight.js && node --check src/xcodeConsoleReader.js && node --check src/xcodeConsoleReaderInternals.js && node --check src/httpBridgeClient.js && node --check src/lookinClient.js && node --check src/portForwarder.js && node --check src/server.js",
+    "build": "node --check src/config.js && node --check src/environmentPreflight.js && node --check src/xcodeConsoleReader.js && node --check src/xcodeConsoleReaderInternals.js && node --check src/xcodeRunner.js && node --check src/httpBridgeClient.js && node --check src/lookinClient.js && node --check src/portForwarder.js && node --check src/server.js",
     "start": "node src/server.js",
     "test": "node --test"
   }

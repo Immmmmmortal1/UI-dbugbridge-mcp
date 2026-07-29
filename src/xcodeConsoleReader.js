@@ -20,6 +20,12 @@ function boundedInteger(value, fallback, minimum, maximum) {
   return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback;
 }
 
+function sleepMs(ms) {
+  if (ms > 0) {
+    $.NSThread.sleepForTimeInterval(ms / 1000);
+  }
+}
+
 function run(argv) {
   const options = JSON.parse(argv[0] || '{}');
   const systemEvents = Application('System Events');
@@ -30,6 +36,12 @@ function run(argv) {
   const xcode = systemEvents.processes.byName('Xcode');
   if (!xcode.exists()) {
     throw new Error('xcode_not_running');
+  }
+
+  if (options.activateXcode !== false) {
+    Application('Xcode').activate();
+    try { xcode.frontmost = true; } catch (_) {}
+    sleepMs(boundedInteger(options.activateDelayMs, 350, 0, 5000));
   }
 
   function attribute(node, name, fallback = '') {

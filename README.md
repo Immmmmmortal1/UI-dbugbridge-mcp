@@ -364,12 +364,13 @@ iproxy -u <your-device-udid> 37777:37777
 工具出现在 `tools/list` 中只代表 MCP 已注册，不代表 App、Lookin 或 DebugBridge 已连通。建议依次验证：
 
 1. `ensure_ports`：真机端口转发可用；模拟器跳过。
-2. `ping`：分别检查返回值中的 `debugBridge` 和 `lookin`，不要只看聚合 `success`。
-3. `get_debug_page`：能返回非空 `pageID` 和元素列表。
-4. `run_flow` 或安全元素操作：能执行稳定 ID 操作并读取操作后的页面状态。
-5. `inspect_ui`：能返回当前 Lookin UI 层级。
-6. `read_xcode_console`：需要时确认 Xcode Console 可读。
-7. 目标业务流程：账号、数据和页面入口均可到达。
+2. `run_xcode_active_scheme`：需要自动运行时，激活当前 Xcode 窗口并发送 `Command+R`，不要用第二套 `xcodebuild`/Debugger 抢当前 Console。
+3. `ping`：分别检查返回值中的 `debugBridge` 和 `lookin`，不要只看聚合 `success`。
+4. `get_debug_page`：能返回非空 `pageID` 和元素列表。
+5. `run_flow` 或安全元素操作：能执行稳定 ID 操作并读取操作后的页面状态。
+6. `inspect_ui`：能返回当前 Lookin UI 层级。
+7. `read_xcode_console`：需要时确认 Xcode Console 可读。
+8. 目标业务流程：账号、数据和页面入口均可到达。
 
 验收结果应明确为：
 
@@ -383,6 +384,7 @@ iproxy -u <your-device-udid> 37777:37777
 | --- | --- |
 | `ping` | 聚合检查 DebugBridge 与 Lookin；调用方应读取各子项结果 |
 | `ensure_ports` | 真机模式启动或复用 `iproxy` 端口转发 |
+| `run_xcode_active_scheme` | 激活 Xcode 当前窗口，并用 `Command+R` 运行当前选中的 scheme |
 | `inspect_ui` | 通过 `lookin-cli` 读取 UI 层级 |
 | `get_debug_page` | 读取当前页面 ID、标题和已注册元素 |
 | `tap_element` | 按稳定 ID 点击元素 |
@@ -429,6 +431,14 @@ iproxy -u <your-device-udid> 37777:37777
 {"name":"set_switch","arguments":{"id":"AutomationTest.toggleSwitch","isOn":true}}
 ```
 
+运行 Xcode 当前 scheme：
+
+```json
+{"name":"run_xcode_active_scheme","arguments":{"waitForReady":true,"readyTimeoutMs":60000}}
+```
+
+`run_xcode_active_scheme` 不调用 `xcodebuild`，也不连接第二个 LLDB；它会把 Xcode 激活到前台，然后发送 `Command+R`，因此 Console 与 Debugger 保持在用户当前 Xcode 会话里。
+
 执行流程并保存 artifact：
 
 ```json
@@ -456,7 +466,7 @@ iproxy -u <your-device-udid> 37777:37777
 {"name":"wait_xcode_console","arguments":{"query":"启动完成","timeoutMs":30000,"intervalMs":1000}}
 ```
 
-`read_xcode_console` 和 `wait_xcode_console` 读取 Xcode 已有 Debug Console，不连接第二个 LLDB，也不使用 `idevicesyslog`。工具只在本机筛选结果，不保存 Console 历史副本。
+`read_xcode_console` 和 `wait_xcode_console` 会先激活 Xcode，再读取 Xcode 已有 Debug Console；它们不连接第二个 LLDB，也不使用 `idevicesyslog`。工具只在本机筛选结果，不保存 Console 历史副本。
 
 运行态与 Figma 语义校对：
 
@@ -523,6 +533,12 @@ iproxy -u <your-device-udid> 37777:37777
 - 确认 Xcode 正在运行且 Debug Area 中已显示 Console。
 - 在“系统设置 → 隐私与安全性 → 辅助功能”中授权 Codex 或启动 MCP 的终端。
 - Xcode 清空或截断 Console 后，MCP 不会恢复历史内容。
+
+### 自动运行与手动 Xcode 冲突
+
+- 使用 `run_xcode_active_scheme`，不要让自动化工具直接调用 `xcodebuild`/`build_run_device` 去启动第二个调试会话。
+- 确认 Xcode 当前选中的 scheme、Run configuration 和目标设备正确；该工具执行的就是当前 Xcode 窗口里的 `Command+R`。
+- 如果看不到新的 `LookDebugBridge ready`，检查 Run configuration 是否为 Debug，以及 AppDelegate 是否调用了 `LookDebugBridge.shared.startIfNeeded()`。
 
 ## 本地开发
 
