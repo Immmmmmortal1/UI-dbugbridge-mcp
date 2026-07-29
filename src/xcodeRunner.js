@@ -4,6 +4,10 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const DEFAULT_ACTIVATE_DELAY_MS = 500;
 const MAX_ACTIVATE_DELAY_MS = 5000;
+const DEFAULT_WINDOW_READY_TIMEOUT_MS = 8000;
+const DEFAULT_WINDOW_READY_INTERVAL_MS = 250;
+const MAX_WINDOW_READY_TIMEOUT_MS = 30000;
+const MAX_WINDOW_READY_INTERVAL_MS = 5000;
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number.parseInt(value, 10);
@@ -27,6 +31,8 @@ function sleepMs(ms) {
 function run(argv) {
   const options = JSON.parse(argv[0] || '{}');
   const activateDelayMs = boundedInteger(options.activateDelayMs, 500, 0, 5000);
+  const windowReadyTimeoutMs = boundedInteger(options.windowReadyTimeoutMs, 8000, 0, 30000);
+  const windowReadyIntervalMs = boundedInteger(options.windowReadyIntervalMs, 250, 50, 5000);
   const systemEvents = Application('System Events');
   if (!systemEvents.uiElementsEnabled()) {
     throw new Error('accessibility_permission_required');
@@ -42,7 +48,12 @@ function run(argv) {
   sleepMs(activateDelayMs);
 
   let windowCount = 0;
-  try { windowCount = xcodeProcess.windows().length; } catch (_) {}
+  const deadline = Date.now() + windowReadyTimeoutMs;
+  do {
+    try { windowCount = xcodeProcess.windows().length; } catch (_) { windowCount = 0; }
+    if (windowCount > 0) break;
+    sleepMs(windowReadyIntervalMs);
+  } while (Date.now() < deadline);
   if (windowCount === 0) {
     throw new Error('xcode_window_not_found');
   }
@@ -80,6 +91,18 @@ export class XcodeRunner {
           DEFAULT_ACTIVATE_DELAY_MS,
           0,
           MAX_ACTIVATE_DELAY_MS
+        ),
+        windowReadyTimeoutMs: boundedInteger(
+          options.windowReadyTimeoutMs,
+          DEFAULT_WINDOW_READY_TIMEOUT_MS,
+          0,
+          MAX_WINDOW_READY_TIMEOUT_MS
+        ),
+        windowReadyIntervalMs: boundedInteger(
+          options.windowReadyIntervalMs,
+          DEFAULT_WINDOW_READY_INTERVAL_MS,
+          50,
+          MAX_WINDOW_READY_INTERVAL_MS
         ),
       });
       return { success: true, payload, error: null };

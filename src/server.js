@@ -30,6 +30,11 @@ const PREFLIGHT_BOOTSTRAP_TOOLS = new Set([
   "wait_xcode_console",
   "run_xcode_active_scheme",
 ]);
+const LOOKIN_REQUIRED_TOOLS = new Set([
+  "ping",
+  "inspect_ui",
+  "get_ui_hierarchy",
+]);
 
 const tools = [
   {
@@ -61,6 +66,18 @@ const tools = [
           minimum: 0,
           maximum: 5000,
           description: "Delay after activating Xcode before sending Command+R. Defaults to 500.",
+        },
+        windowReadyTimeoutMs: {
+          type: "integer",
+          minimum: 0,
+          maximum: 30000,
+          description: "Maximum time to wait for an Xcode window after activation. Defaults to 8000.",
+        },
+        windowReadyIntervalMs: {
+          type: "integer",
+          minimum: 50,
+          maximum: 5000,
+          description: "Polling interval while waiting for the Xcode window. Defaults to 250.",
         },
         waitForReady: {
           type: "boolean",
@@ -1040,6 +1057,7 @@ async function dispatchTool(name, args) {
         bridgeClient,
         lookinClient,
         xcodeConsoleReader,
+        requireLookin: LOOKIN_REQUIRED_TOOLS.has(name),
       })
     : null;
 

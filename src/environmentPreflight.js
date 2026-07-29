@@ -114,6 +114,7 @@ export async function runEnvironmentPreflight({
   bridgeClient,
   lookinClient,
   xcodeConsoleReader,
+  requireLookin = true,
 }) {
   const startedAt = Date.now();
   const portForward = await captureResult(() => portForwarder.ensureAll());
@@ -121,7 +122,16 @@ export async function runEnvironmentPreflight({
 
   const [bridgePing, lookinPing, consoleRead] = await Promise.all([
     captureResult(() => bridgeClient.ping()),
-    captureResult(() => lookinClient.ping()),
+    requireLookin
+      ? captureResult(() => lookinClient.ping())
+      : Promise.resolve({
+          success: true,
+          payload: {
+            skipped: true,
+            reason: "lookin_not_required_for_http_debug_bridge_tool",
+          },
+          error: null,
+        }),
     captureResult(() =>
       xcodeConsoleReader.read({
         query: CONSOLE_QUERY,

@@ -20,7 +20,32 @@ test("runActiveScheme activates Xcode and sends the current scheme shortcut", as
   const result = await runner.runActiveScheme({ activateDelayMs: 99999 });
   assert.equal(result.success, true);
   assert.equal(received.activateDelayMs, 5000);
+  assert.equal(received.windowReadyTimeoutMs, 8000);
+  assert.equal(received.windowReadyIntervalMs, 250);
   assert.equal(result.payload.status, "command_r_sent");
+});
+
+test("runActiveScheme accepts longer Xcode window readiness timing", async () => {
+  let received;
+  const runner = new XcodeRunner({
+    runScript: async (options) => {
+      received = options;
+      return {
+        source: "xcode_active_scheme_runner",
+        status: "command_r_sent",
+        frontmost: true,
+        windowCount: 1,
+      };
+    },
+  });
+
+  const result = await runner.runActiveScheme({
+    windowReadyTimeoutMs: 12000,
+    windowReadyIntervalMs: 750,
+  });
+  assert.equal(result.success, true);
+  assert.equal(received.windowReadyTimeoutMs, 12000);
+  assert.equal(received.windowReadyIntervalMs, 750);
 });
 
 test("runActiveScheme exposes stable Xcode automation errors", async () => {

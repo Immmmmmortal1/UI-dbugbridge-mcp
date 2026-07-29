@@ -107,3 +107,30 @@ test("preflight does not block on missing managed port forwarding when services 
   assert.equal(checkByName(result, "port_forward").payload.managedForwarding, false);
   assert.equal(checkByName(result, "port_forward").payload.warning, "missing_LOOKDEBUG_DEVICE_UDID");
 });
+
+test("HTTP DebugBridge tools do not require Lookin ping", async () => {
+  const result = await runEnvironmentPreflight(makeDependencies({
+    requireLookin: false,
+    lookinClient: {
+      ping: async () => ({ success: false, payload: null, error: "lookin_timeout" }),
+    },
+  }));
+
+  assert.equal(result.success, true);
+  assert.equal(checkByName(result, "debug_bridge_ping").success, true);
+  assert.equal(checkByName(result, "lookin_ping").success, true);
+  assert.equal(checkByName(result, "lookin_ping").payload.skipped, true);
+});
+
+test("Lookin tools still require Lookin ping", async () => {
+  const result = await runEnvironmentPreflight(makeDependencies({
+    lookinClient: {
+      ping: async () => ({ success: false, payload: null, error: "lookin_timeout" }),
+    },
+  }));
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /lookin_ping/);
+  assert.equal(checkByName(result, "lookin_ping").success, false);
+  assert.equal(checkByName(result, "lookin_ping").error, "lookin_timeout");
+});
