@@ -139,6 +139,20 @@ final class LookDebugBridgeServer {
                     request: payload,
                     currentViewController: currentViewControllerProvider()
                 )
+            case ("POST", "/debug/text/set"):
+                let payload = try JSONDecoder().decode(LookDebugTextRequest.self, from: request.body)
+                return try router.setText(
+                    request: payload,
+                    appending: false,
+                    currentViewController: currentViewControllerProvider()
+                )
+            case ("POST", "/debug/text/type"):
+                let payload = try JSONDecoder().decode(LookDebugTextRequest.self, from: request.body)
+                return try router.setText(
+                    request: payload,
+                    appending: true,
+                    currentViewController: currentViewControllerProvider()
+                )
             default:
                 return try errorResponse(statusCode: 404, error: "not_found")
             }

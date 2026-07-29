@@ -49,3 +49,35 @@ test("stdio transport accepts and returns newline-delimited MCP messages", async
   assert.equal(response.id, 1);
   assert.equal(response.result.serverInfo.name, "lookdebug-mcp");
 });
+
+test("tools list includes text entry tools", async (t) => {
+  const server = spawn(process.execPath, ["src/server.js"], {
+    cwd: new URL("..", import.meta.url),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  t.after(() => server.kill());
+
+  server.stdin.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "transport-test", version: "1.0.0" },
+    },
+  })}\n`);
+  await readJSONLine(server.stdout);
+
+  server.stdin.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/list",
+    params: {},
+  })}\n`);
+
+  const response = await readJSONLine(server.stdout);
+  const names = response.result.tools.map((tool) => tool.name);
+  assert.equal(names.includes("set_text"), true);
+  assert.equal(names.includes("type_text"), true);
+});

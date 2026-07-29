@@ -284,6 +284,140 @@ const tools = [
     },
   },
   {
+    name: "set_text",
+    description: "Replace text in a UITextField or UITextView by stable DebugBridge ID, focusing the control and firing editing-change events.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "Debug element identifier, for example photoComment.input.",
+        },
+        text: {
+          type: "string",
+          description: "Exact text to set.",
+        },
+        waitAfterMs: {
+          type: "integer",
+          minimum: 0,
+          description: "Delay after setting text before reading the next page. Defaults to 350.",
+        },
+        waitForPageID: {
+          type: "string",
+          description: "Optional pageID to wait for after setting text.",
+        },
+        waitForPageIDs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional acceptable pageIDs to wait for after setting text.",
+        },
+        waitForElementID: {
+          type: "string",
+          description: "Optional element ID to wait for after setting text.",
+        },
+        waitForLabel: {
+          type: "string",
+          description: "Optional exact element label to wait for after setting text.",
+        },
+        waitForLabelIncludes: {
+          type: "string",
+          description: "Optional element label substring to wait for after setting text.",
+        },
+        waitForElement: {
+          type: "object",
+          description: "Optional element criteria to wait for after setting text.",
+          properties: {
+            id: { type: "string" },
+            idIncludes: { type: "string" },
+            label: { type: "string" },
+            labelIncludes: { type: "string" },
+            type: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+        timeoutMs: {
+          type: "integer",
+          minimum: 0,
+          description: "How long to wait for post-action page availability or target criteria. Defaults to 8000.",
+        },
+        intervalMs: {
+          type: "integer",
+          minimum: 50,
+          description: "Polling interval after setting text. Defaults to 300.",
+        },
+      },
+      required: ["id", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "type_text",
+    description: "Append text to a UITextField or UITextView by stable DebugBridge ID, focusing the control and firing editing-change events.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "Debug element identifier, for example photoComment.input.",
+        },
+        text: {
+          type: "string",
+          description: "Text to append.",
+        },
+        waitAfterMs: {
+          type: "integer",
+          minimum: 0,
+          description: "Delay after typing text before reading the next page. Defaults to 350.",
+        },
+        waitForPageID: {
+          type: "string",
+          description: "Optional pageID to wait for after typing text.",
+        },
+        waitForPageIDs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional acceptable pageIDs to wait for after typing text.",
+        },
+        waitForElementID: {
+          type: "string",
+          description: "Optional element ID to wait for after typing text.",
+        },
+        waitForLabel: {
+          type: "string",
+          description: "Optional exact element label to wait for after typing text.",
+        },
+        waitForLabelIncludes: {
+          type: "string",
+          description: "Optional element label substring to wait for after typing text.",
+        },
+        waitForElement: {
+          type: "object",
+          description: "Optional element criteria to wait for after typing text.",
+          properties: {
+            id: { type: "string" },
+            idIncludes: { type: "string" },
+            label: { type: "string" },
+            labelIncludes: { type: "string" },
+            type: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+        timeoutMs: {
+          type: "integer",
+          minimum: 0,
+          description: "How long to wait for post-action page availability or target criteria. Defaults to 8000.",
+        },
+        intervalMs: {
+          type: "integer",
+          minimum: 50,
+          description: "Polling interval after typing text. Defaults to 300.",
+        },
+      },
+      required: ["id", "text"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "run_flow",
     description: "Run a UI operation flow against the current app page using DebugBridge IDs or labels.",
     inputSchema: {
@@ -292,13 +426,13 @@ const tools = [
         steps: {
           type: "array",
           minItems: 1,
-          description: "Ordered UI steps. Supported actions: tap, tap_if_present, set_switch, wait_for_page, wait_for_element, sleep.",
+          description: "Ordered UI steps. Supported actions: tap, tap_if_present, set_switch, set_text, type_text, wait_for_page, wait_for_element, sleep.",
           items: {
             type: "object",
             properties: {
               action: {
                 type: "string",
-                enum: ["tap", "tap_if_present", "set_switch", "wait_for_page", "wait_for_element", "sleep"],
+                enum: ["tap", "tap_if_present", "set_switch", "set_text", "type_text", "wait_for_page", "wait_for_element", "sleep"],
               },
               id: {
                 type: "string",
@@ -323,6 +457,10 @@ const tools = [
               isOn: {
                 type: "boolean",
                 description: "Target value for set_switch.",
+              },
+              text: {
+                type: "string",
+                description: "Text value for set_text or type_text.",
               },
               pageID: {
                 type: "string",
@@ -790,7 +928,13 @@ async function runFlow(steps) {
       continue;
     }
 
-    if (action !== "tap" && action !== "tap_if_present" && action !== "set_switch") {
+    if (
+      action !== "tap" &&
+      action !== "tap_if_present" &&
+      action !== "set_switch" &&
+      action !== "set_text" &&
+      action !== "type_text"
+    ) {
       throw new Error(`unsupported_flow_action:${action}`);
     }
 
@@ -811,10 +955,16 @@ async function runFlow(steps) {
       throw new Error(`flow_element_not_found step:${index} page:${page.pageID}`);
     }
 
-    const result =
-      action === "set_switch"
-        ? await bridgeClient.setSwitch(element.id, step.isOn)
-        : await bridgeClient.tapElement(element.id);
+    let result;
+    if (action === "set_switch") {
+      result = await bridgeClient.setSwitch(element.id, step.isOn);
+    } else if (action === "set_text") {
+      result = await bridgeClient.setText(element.id, step.text ?? "");
+    } else if (action === "type_text") {
+      result = await bridgeClient.typeText(element.id, step.text ?? "");
+    } else {
+      result = await bridgeClient.tapElement(element.id);
+    }
 
     if (!bridgeResultOK(result)) {
       throw new Error(`flow_${action}_failed step:${index} element:${element.id} error:${bridgeError(result)}`);
@@ -1063,6 +1213,64 @@ async function dispatchTool(name, args) {
             success: false,
             payload: { response: result.payload, retry: error.retry ?? null },
             error: `set_switch_succeeded_but_wait_failed ${error.message}`,
+          });
+        }
+      }
+      return makeToolResult("http_bridge", {
+        success: result.ok && result.payload?.success !== false,
+        payload: { response: result.payload, nextPage },
+        error: result.ok ? result.payload?.error ?? null : result.payload?.error || `http_${result.status}`,
+      });
+    }
+    case "set_text":
+    case "type_text": {
+      const result = name === "set_text"
+        ? await bridgeClient.setText(args.id, args.text)
+        : await bridgeClient.typeText(args.id, args.text);
+      let nextPage = null;
+      if (bridgeResultOK(result)) {
+        try {
+          const waitStep = { ...args };
+          if (args.waitForPageID || args.waitForPageIDs?.length) {
+            if ((waitStep.waitAfterMs ?? DEFAULT_POST_ACTION_WAIT_MS) > 0) {
+              await sleep(waitStep.waitAfterMs ?? DEFAULT_POST_ACTION_WAIT_MS);
+            }
+            const page = await waitForPageMatch(
+              (currentPage) => pageMatches(currentPage, args.waitForPageID, args.waitForPageIDs),
+              {
+                timeoutMs: args.timeoutMs ?? DEFAULT_PAGE_TIMEOUT_MS,
+                intervalMs: args.intervalMs ?? DEFAULT_PAGE_INTERVAL_MS,
+              }
+            );
+            nextPage = { ...pageSummary(page), reason: "wait_for_page" };
+          } else {
+            const waitCriteria = waitCriteriaFromStep(args);
+            if (waitCriteria) {
+              if ((waitStep.waitAfterMs ?? DEFAULT_POST_ACTION_WAIT_MS) > 0) {
+                await sleep(waitStep.waitAfterMs ?? DEFAULT_POST_ACTION_WAIT_MS);
+              }
+              const page = await waitForPageMatch(
+                (currentPage) => Boolean(findElement(currentPage, waitCriteria)),
+                {
+                  timeoutMs: args.timeoutMs ?? DEFAULT_PAGE_TIMEOUT_MS,
+                  intervalMs: args.intervalMs ?? DEFAULT_PAGE_INTERVAL_MS,
+                }
+              );
+              nextPage = {
+                ...pageSummary(page),
+                reason: "wait_for_element",
+                element: findElement(page, waitCriteria),
+              };
+            } else {
+              const { page, retry } = await waitAfterActionAndReadPage(waitStep);
+              nextPage = { ...pageSummary(page), reason: "page_available", retry };
+            }
+          }
+        } catch (error) {
+          return makeToolResult("http_bridge", {
+            success: false,
+            payload: { response: result.payload, retry: error.retry ?? null },
+            error: `${name}_succeeded_but_wait_failed ${error.message}`,
           });
         }
       }

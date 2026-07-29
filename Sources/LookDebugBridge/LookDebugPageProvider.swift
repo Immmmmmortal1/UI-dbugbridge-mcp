@@ -186,6 +186,9 @@ struct LookDebugPageProvider {
     }
 
     private func elementType(for view: UIView) -> LookDebugElementType {
+        if view is UITextField || view is UITextView {
+            return .text
+        }
         if view is UISwitch {
             return .switch
         }

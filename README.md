@@ -182,6 +182,8 @@ GET  /ping
 GET  /debug/page
 POST /debug/tap
 POST /debug/switch
+POST /debug/text/set
+POST /debug/text/type
 ```
 
 ### 3. 注册页面和元素
@@ -225,6 +227,7 @@ extension AutomationTestViewController: LookDebugPageDescribing {
 - 页面 ID 和元素 ID 一经使用尽量保持稳定。
 - 只注册允许自动化操作的控件。
 - 优先通过既有 `UIControl` 事件执行操作，不绕过业务逻辑直接修改状态。
+- 文本输入只支持真实 `UITextField` / `UITextView`；`set` 替换全文，`type` 追加文本，并触发编辑事件。
 - Release 包不应启动 Bridge。
 
 ## 二、Mac 侧 MCP 接入
@@ -389,6 +392,8 @@ iproxy -u <your-device-udid> 37777:37777
 | `get_debug_page` | 读取当前页面 ID、标题和已注册元素 |
 | `tap_element` | 按稳定 ID 点击元素 |
 | `set_switch` | 按稳定 ID 明确设置开关状态 |
+| `set_text` | 按稳定 ID 替换 `UITextField` / `UITextView` 文本 |
+| `type_text` | 按稳定 ID 向 `UITextField` / `UITextView` 追加文本 |
 | `run_flow` | 执行等待、点击、设置开关等多步流程，并可保存 trace |
 | `audit_runtime` | 将 Figma raw 数据与运行态元素做语义对齐 |
 | `read_xcode_console` | 筛选并读取当前 Xcode Debug Console |
@@ -429,6 +434,16 @@ iproxy -u <your-device-udid> 37777:37777
 
 ```json
 {"name":"set_switch","arguments":{"id":"AutomationTest.toggleSwitch","isOn":true}}
+```
+
+输入文本：
+
+```json
+{"name":"set_text","arguments":{"id":"photoComment.input","text":"Hi"}}
+```
+
+```json
+{"name":"type_text","arguments":{"id":"photoComment.input","text":"!"}}
 ```
 
 运行 Xcode 当前 scheme：

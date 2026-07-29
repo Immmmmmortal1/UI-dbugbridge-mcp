@@ -28,6 +28,14 @@ export class HTTPBridgeClient {
     return this.#request("POST", "/debug/switch", { id, isOn });
   }
 
+  async setText(id, text) {
+    return this.#request("POST", "/debug/text/set", { id, text });
+  }
+
+  async typeText(id, text) {
+    return this.#request("POST", "/debug/text/type", { id, text });
+  }
+
   async ping() {
     return this.#request("GET", "/ping");
   }

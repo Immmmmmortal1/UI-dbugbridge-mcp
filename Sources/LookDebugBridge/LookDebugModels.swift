@@ -4,6 +4,7 @@ public enum LookDebugElementType: String, Codable, Equatable {
     case button
     case `switch` = "switch"
     case cell
+    case text
     case label
     case view
 }
@@ -44,6 +45,18 @@ struct LookDebugSwitchResponse: Codable, Equatable {
     let success: Bool
     let id: String?
     let isOn: Bool?
+    let error: String?
+}
+
+struct LookDebugTextRequest: Codable, Equatable {
+    let id: String
+    let text: String
+}
+
+struct LookDebugTextResponse: Codable, Equatable {
+    let success: Bool
+    let id: String?
+    let text: String?
     let error: String?
 }
 

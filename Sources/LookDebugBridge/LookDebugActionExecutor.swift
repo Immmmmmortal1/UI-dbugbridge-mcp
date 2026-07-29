@@ -70,12 +70,66 @@ struct LookDebugActionExecutor {
         switchControl.sendActions(for: .valueChanged)
     }
 
+    func setText(id: String, text: String, appending: Bool) throws -> String {
+        guard let entry = registry.entry(for: id),
+              let view = entry.view else {
+            throw LookDebugActionExecutorError.elementNotFound
+        }
+
+        if let textField = view as? UITextField {
+            return try setTextFieldText(textField, text: text, appending: appending)
+        }
+
+        if let textView = view as? UITextView {
+            return try setTextViewText(textView, text: text, appending: appending)
+        }
+
+        throw LookDebugActionExecutorError.unsupportedElementType
+    }
+
     private func tappableView(id: String) throws -> UIView {
         guard let entry = registry.entry(for: id),
               let view = entry.view else {
             throw LookDebugActionExecutorError.elementNotFound
         }
         return view
+    }
+
+    private func setTextFieldText(_ textField: UITextField, text: String, appending: Bool) throws -> String {
+        let current = textField.text ?? ""
+        let next = appending ? current + text : text
+        let range = appending
+            ? NSRange(location: (current as NSString).length, length: 0)
+            : NSRange(location: 0, length: (current as NSString).length)
+
+        if textField.delegate?.textField?(textField, shouldChangeCharactersIn: range, replacementString: text) == false {
+            throw LookDebugActionExecutorError.unsupportedElementType
+        }
+
+        textField.becomeFirstResponder()
+        textField.text = next
+        textField.accessibilityValue = next.isEmpty ? nil : next
+        textField.sendActions(for: .editingChanged)
+        return next
+    }
+
+    private func setTextViewText(_ textView: UITextView, text: String, appending: Bool) throws -> String {
+        let current = textView.text ?? ""
+        let next = appending ? current + text : text
+        let range = appending
+            ? NSRange(location: (current as NSString).length, length: 0)
+            : NSRange(location: 0, length: (current as NSString).length)
+
+        if textView.delegate?.textView?(textView, shouldChangeTextIn: range, replacementText: text) == false {
+            throw LookDebugActionExecutorError.unsupportedElementType
+        }
+
+        textView.becomeFirstResponder()
+        textView.text = next
+        textView.accessibilityValue = next.isEmpty ? nil : next
+        textView.delegate?.textViewDidChange?(textView)
+        NotificationCenter.default.post(name: UITextView.textDidChangeNotification, object: textView)
+        return next
     }
 
     private func tapTabBarButton(_ control: UIControl) -> Bool {
