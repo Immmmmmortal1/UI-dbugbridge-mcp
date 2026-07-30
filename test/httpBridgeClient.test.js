@@ -39,3 +39,23 @@ test("typeText posts appended text to DebugBridge", async () => {
   assert.equal(calls[0].options.method, "POST");
   assert.deepEqual(JSON.parse(calls[0].options.body), { id: "field", text: "!" });
 });
+
+test("getRuntimeNode posts runtime anchor to DebugBridge", async () => {
+  const { calls, fetchImpl } = makeFetchRecorder({
+    anchor: "figma.1739_13055",
+    found: true,
+    unique: true,
+    matchCount: 1,
+    node: { className: "UILabel" },
+    matches: [],
+    error: null,
+  });
+  const client = new HTTPBridgeClient({ baseURL: "http://127.0.0.1:37777", fetchImpl });
+
+  const result = await client.getRuntimeNode("figma.1739_13055");
+
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].url, "http://127.0.0.1:37777/debug/runtime/node");
+  assert.equal(calls[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { anchor: "figma.1739_13055" });
+});

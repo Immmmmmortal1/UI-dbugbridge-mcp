@@ -536,6 +536,33 @@ iproxy -u <your-device-udid> 37777:37777
 - 在 `registerLookDebugElements` 中注册控件。
 - 确认注册的控件已进入当前视图层级。
 
+### `get_runtime_node` 按 Figma runtime-anchor 查运行时控件
+
+`get_runtime_node` 不依赖 `LookDebugPageDescribing` 注册表。它直接在 App 进程内遍历当前 `UIWindow` / `UIView.subviews`，匹配：
+
+```swift
+view.accessibilityIdentifier == "figma.1739_13055"
+```
+
+调用示例：
+
+```json
+{
+  "anchor": "figma.1739_13055",
+  "saveArtifact": true,
+  "artifactDir": ".devflow-ui/runtime"
+}
+```
+
+返回内容包含 `found`、`unique`、`matchCount`、`className`、`frameInWindow`、`hidden`、`alpha`、`text`、`fontName`、`fontSize`、`textColor`、`backgroundColor`、`cornerRadius`、`imageAssetName`、`controlEnabled` 等字段，可作为 UI 实现校对的 `runtime_detail.json` 证据。
+
+图片资源名需要 App 侧显式绑定：
+
+```swift
+imageView.image = UIImage(named: "figma_1739_12994_male")
+imageView.lookDebugAssetName = "figma_1739_12994_male"
+```
+
 ### `inspect_ui` 失败
 
 - 确认 `lookin-cli` 可执行。

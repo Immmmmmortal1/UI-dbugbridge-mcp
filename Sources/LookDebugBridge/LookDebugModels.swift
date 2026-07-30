@@ -60,6 +60,87 @@ struct LookDebugTextResponse: Codable, Equatable {
     let error: String?
 }
 
+struct LookDebugRuntimeNodeRequest: Codable, Equatable {
+    let anchor: String
+}
+
+struct LookDebugRuntimeRect: Codable, Equatable {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
+
+struct LookDebugRuntimeSize: Codable, Equatable {
+    let width: Double
+    let height: Double
+}
+
+struct LookDebugRuntimeColor: Codable, Equatable {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let alpha: Double
+    let hex: String
+}
+
+struct LookDebugRuntimeNodeSummary: Codable, Equatable {
+    let accessibilityIdentifier: String?
+    let accessibilityLabel: String?
+    let className: String
+    let frameInWindow: LookDebugRuntimeRect
+    let hidden: Bool
+    let alpha: Double
+}
+
+struct LookDebugRuntimeNodeDetail: Codable, Equatable {
+    let anchor: String
+    let accessibilityIdentifier: String?
+    let accessibilityLabel: String?
+    let accessibilityValue: String?
+    let className: String
+    let classChain: [String]
+    let frameInWindow: LookDebugRuntimeRect
+    let bounds: LookDebugRuntimeRect
+    let hidden: Bool
+    let alpha: Double
+    let userInteractionEnabled: Bool
+    let backgroundColor: LookDebugRuntimeColor?
+    let tintColor: LookDebugRuntimeColor?
+    let contentMode: String
+    let cornerRadius: Double
+    let masksToBounds: Bool
+    let borderWidth: Double
+    let borderColor: LookDebugRuntimeColor?
+    let shadowColor: LookDebugRuntimeColor?
+    let shadowOpacity: Double
+    let shadowRadius: Double
+    let shadowOffset: LookDebugRuntimeSize
+    let text: String?
+    let placeholder: String?
+    let fontName: String?
+    let fontSize: Double?
+    let textColor: LookDebugRuntimeColor?
+    let textAlignment: String?
+    let numberOfLines: Int?
+    let imageAssetName: String?
+    let imageSize: LookDebugRuntimeSize?
+    let imageRenderingMode: String?
+    let controlEnabled: Bool?
+    let controlSelected: Bool?
+    let controlHighlighted: Bool?
+}
+
+struct LookDebugRuntimeNodeResponse: Codable, Equatable {
+    let anchor: String
+    let found: Bool
+    let unique: Bool
+    let matchCount: Int
+    let node: LookDebugRuntimeNodeDetail?
+    let matches: [LookDebugRuntimeNodeSummary]
+    let error: String?
+}
+
 struct LookDebugErrorResponse: Codable, Equatable {
     let success: Bool
     let error: String

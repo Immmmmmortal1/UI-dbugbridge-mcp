@@ -36,6 +36,10 @@ export class HTTPBridgeClient {
     return this.#request("POST", "/debug/text/type", { id, text });
   }
 
+  async getRuntimeNode(anchor) {
+    return this.#request("POST", "/debug/runtime/node", { anchor });
+  }
+
   async ping() {
     return this.#request("GET", "/ping");
   }

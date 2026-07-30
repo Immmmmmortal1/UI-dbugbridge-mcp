@@ -153,6 +153,9 @@ final class LookDebugBridgeServer {
                     appending: true,
                     currentViewController: currentViewControllerProvider()
                 )
+            case ("POST", "/debug/runtime/node"):
+                let payload = try JSONDecoder().decode(LookDebugRuntimeNodeRequest.self, from: request.body)
+                return try router.runtimeNode(request: payload)
             default:
                 return try errorResponse(statusCode: 404, error: "not_found")
             }
@@ -234,7 +237,7 @@ private struct ParsedLookDebugHTTPRequest {
     let body: Data
 
     init(data: Data) throws {
-        guard let string = String(data: data, encoding: .utf8) else {
+        guard String(data: data, encoding: .utf8) != nil else {
             throw ParseError.invalidEncoding
         }
 

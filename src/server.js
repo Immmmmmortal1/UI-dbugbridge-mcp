@@ -171,6 +171,33 @@ const tools = [
     },
   },
   {
+    name: "get_runtime_node",
+    description: "Read a live UIKit node by runtime anchor/accessibilityIdentifier via the in-app DebugBridge, optionally saving a runtime detail artifact.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        anchor: {
+          type: "string",
+          description: "Runtime anchor to match against UIView.accessibilityIdentifier, for example figma.1739_13055.",
+        },
+        saveArtifact: {
+          type: "boolean",
+          description: "Save the captured runtime node JSON to artifactDir. Defaults to false.",
+        },
+        artifactDir: {
+          type: "string",
+          description: "Directory for saved artifacts. Defaults to .devflow-ui/runtime.",
+        },
+        artifactPrefix: {
+          type: "string",
+          description: "Optional file prefix for saved artifacts.",
+        },
+      },
+      required: ["anchor"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "tap_element",
     description: "Tap an element by stable DebugBridge ID.",
     inputSchema: {
@@ -1128,6 +1155,24 @@ async function dispatchTool(name, args) {
         success: result.ok,
         payload,
         error: null,
+      });
+    }
+    case "get_runtime_node": {
+      const result = await bridgeClient.getRuntimeNode(args.anchor);
+      let payload = result.payload;
+      let artifactPath = null;
+      if (args.saveArtifact && payload) {
+        artifactPath = await writeJSONArtifact(payload, {
+          artifactDir: args.artifactDir,
+          artifactPrefix: args.artifactPrefix || args.anchor.replace(/[^A-Za-z0-9_.-]/g, "_"),
+          suffix: "runtime-detail",
+        });
+        payload = { ...payload, artifactPath };
+      }
+      return makeToolResult("http_bridge", {
+        success: result.ok && result.payload?.unique === true,
+        payload,
+        error: result.ok ? result.payload?.error ?? null : result.payload?.error || `http_${result.status}`,
       });
     }
     case "tap_element": {

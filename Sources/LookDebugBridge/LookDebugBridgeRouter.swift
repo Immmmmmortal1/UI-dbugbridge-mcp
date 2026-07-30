@@ -150,6 +150,12 @@ struct LookDebugBridgeRouter {
         }
     }
 
+    func runtimeNode(request: LookDebugRuntimeNodeRequest) throws -> LookDebugHTTPResponse {
+        let payload = LookDebugRuntimeInspector().node(anchor: request.anchor)
+        let statusCode = payload.unique ? 200 : (payload.found ? 409 : 404)
+        return try jsonResponse(statusCode: statusCode, payload: payload)
+    }
+
     private func jsonResponse<T: Encodable>(statusCode: Int, payload: T) throws -> LookDebugHTTPResponse {
         let data = try JSONEncoder().encode(payload)
         return LookDebugHTTPResponse(statusCode: statusCode, body: data)
