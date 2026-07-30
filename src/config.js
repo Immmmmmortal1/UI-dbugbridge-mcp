@@ -1,7 +1,9 @@
 import path from "node:path";
 
 function readMode(value) {
-  return value === "simulator" ? "simulator" : "device";
+  if (value === "simulator") return "simulator";
+  if (value === "device") return "device";
+  return "auto";
 }
 
 function readInteger(value, fallback) {
@@ -16,7 +18,7 @@ function sanitizeCommand(command) {
 export function loadConfig(env = process.env) {
   const bridgeBaseURL = (env.BRIDGE_BASE_URL || "http://127.0.0.1:37777").trim();
   const lookinCliPath = (env.LOOKIN_CLI_PATH || "lookin-cli").trim();
-  const lookinMode = readMode((env.LOOKIN_MODE || "device").trim());
+  const lookinMode = readMode((env.LOOKIN_MODE || "auto").trim());
   const lookinHost = (env.LOOKIN_HOST || "127.0.0.1").trim();
   const screenshotCommand = sanitizeCommand(env.LOOKIN_SCREENSHOT_COMMAND || "");
   const deviceUDID = (env.LOOKDEBUG_DEVICE_UDID || "").trim();
@@ -30,6 +32,7 @@ export function loadConfig(env = process.env) {
     bridgeBaseURL,
     lookinCliPath,
     lookinMode,
+    requestedLookinMode: lookinMode,
     lookinHost,
     screenshotCommand,
     deviceUDID,

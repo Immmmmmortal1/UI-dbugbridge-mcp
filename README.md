@@ -4,12 +4,25 @@
 
 > 本仓库是 **Mac 侧 MCP Server**，不是 Codex Skill。iOS App 还需要接入 [`LookDebugBridge`](https://github.com/Immmmmmortal1/LookDebugBridge)。两端都配置完成后才能使用完整能力。
 
-## 先选运行模式
+## 固定运行规则
+
+MCP 每次调用工具都会先执行一次运行目标探测，规则固定如下：
+
+1. 优先查询已连接且开发服务可用的真机。
+2. 发现真机后强制使用真机，即使配置中遗留了 `LOOKIN_MODE=simulator`。
+3. 只有没有可用真机时，才切换到模拟器，并在返回结果中记录 `fallbackReason`。
+4. 运行调试只能走当前 Xcode 窗口：先激活 Xcode，再发送 `Command+R`，等待新的 `LookDebugBridge ready` 后，才能调用 DebugBridge UI 操作。
+5. 不使用 detached `xcodebuild`、第二个 LLDB 会话或其他运行路径替代这条链路。
+
+推荐配置 `LOOKIN_MODE=auto`。`device` / `simulator` 仅作为兼容旧配置保留，不能绕过真机优先规则。
+
+## 运行模式说明
 
 | 场景 | `LOOKIN_MODE` | 是否需要 `iproxy` | 必填设备信息 |
 | --- | --- | --- | --- |
-| iOS 模拟器 | `simulator` | 否 | 无 |
-| iPhone / iPad 真机 | `device` | 是 | `LOOKDEBUG_DEVICE_UDID` |
+| 自动选择，真机优先 | `auto` | 自动判断 | 可选，填写后优先匹配该真机 |
+| iOS 模拟器，无可用真机时 | `simulator` | 否 | 无 |
+| iPhone / iPad 真机 | `device` | 是 | 可选，填写后优先匹配该真机 |
 
 ## 5 分钟快速接入
 
@@ -67,12 +80,12 @@ startup_timeout_sec = 30.0
 [mcp_servers.ui_lookin_debugbridge.env]
 BRIDGE_BASE_URL = "http://127.0.0.1:37777"
 LOOKIN_CLI_PATH = "lookin-cli"
-LOOKIN_MODE = "simulator"
+LOOKIN_MODE = "auto"
 LOOKIN_HOST = "127.0.0.1"
 LOOKIN_SCREENSHOT_COMMAND = "xcrun simctl io booted screenshot {output}"
 ```
 
-真机把 `LOOKIN_MODE` 改为 `device`，并补充：
+如需优先匹配指定真机，可以补充设备 UDID。没有可用真机时 MCP 会自动使用模拟器：
 
 ```toml
 LOOKDEBUG_DEVICE_UDID = "<your-device-udid>"
@@ -272,7 +285,7 @@ command -v lookin-cli
 command -v iproxy # 仅真机模式必需
 ```
 
-#### 模拟器配置
+#### 自动配置（真机优先，无真机时使用模拟器）
 
 ```toml
 [mcp_servers.ui_lookin_debugbridge]
@@ -283,9 +296,9 @@ startup_timeout_sec = 30.0
 [mcp_servers.ui_lookin_debugbridge.env]
 BRIDGE_BASE_URL = "http://127.0.0.1:37777"
 LOOKIN_CLI_PATH = "lookin-cli"
-LOOKIN_MODE = "simulator"
+LOOKIN_MODE = "auto"
 LOOKIN_HOST = "127.0.0.1"
-LOOKIN_SCREENSHOT_COMMAND = "xcrun simctl io booted screenshot {output}"
+LOOKIN_SCREENSHOT_COMMAND = ""
 ```
 
 #### 真机配置
@@ -307,7 +320,7 @@ startup_timeout_sec = 30.0
 [mcp_servers.ui_lookin_debugbridge.env]
 BRIDGE_BASE_URL = "http://127.0.0.1:37777"
 LOOKIN_CLI_PATH = "lookin-cli"
-LOOKIN_MODE = "device"
+LOOKIN_MODE = "auto"
 LOOKIN_HOST = "127.0.0.1"
 LOOKDEBUG_DEVICE_UDID = "<your-device-udid>"
 IPROXY_PATH = "iproxy"
@@ -367,7 +380,7 @@ iproxy -u <your-device-udid> 37777:37777
 工具出现在 `tools/list` 中只代表 MCP 已注册，不代表 App、Lookin 或 DebugBridge 已连通。建议依次验证：
 
 1. `ensure_ports`：真机端口转发可用；模拟器跳过。
-2. `run_xcode_active_scheme`：需要自动运行时，激活当前 Xcode 窗口并发送 `Command+R`，不要用第二套 `xcodebuild`/Debugger 抢当前 Console。
+2. `run_xcode_active_scheme`：需要自动运行时，激活当前 Xcode 窗口并发送 `Command+R`，不要用第二套 `xcodebuild`/Debugger 抢当前 Console。LoveOn 真机调试流程中禁用 XcodeBuildMCP `build_device` 和 `build_run_sim`。
 3. `ping`：分别检查返回值中的 `debugBridge` 和 `lookin`，不要只看聚合 `success`。
 4. `get_debug_page`：能返回非空 `pageID` 和元素列表。
 5. `run_flow` 或安全元素操作：能执行稳定 ID 操作并读取操作后的页面状态。
@@ -452,7 +465,7 @@ iproxy -u <your-device-udid> 37777:37777
 {"name":"run_xcode_active_scheme","arguments":{"waitForReady":true,"readyTimeoutMs":60000}}
 ```
 
-`run_xcode_active_scheme` 不调用 `xcodebuild`，也不连接第二个 LLDB；它会把 Xcode 激活到前台，然后发送 `Command+R`，因此 Console 与 Debugger 保持在用户当前 Xcode 会话里。
+`run_xcode_active_scheme` 不调用 `xcodebuild`，也不连接第二个 LLDB；它会把 Xcode 激活到前台，然后发送 `Command+R`，因此 Console 与 Debugger 保持在用户当前 Xcode 会话里。LoveOn 真机调试时不要用 XcodeBuildMCP `build_device` 或 `build_run_sim` 替代它。
 
 执行流程并保存 artifact：
 
@@ -505,9 +518,9 @@ iproxy -u <your-device-udid> 37777:37777
 | --- | --- | --- |
 | `BRIDGE_BASE_URL` | `http://127.0.0.1:37777` | DebugBridge HTTP 地址 |
 | `LOOKIN_CLI_PATH` | `lookin-cli` | `lookin-cli` 命令或绝对路径 |
-| `LOOKIN_MODE` | `device` | `device` 或 `simulator` |
+| `LOOKIN_MODE` | `auto` | `auto`、`device` 或 `simulator`；始终遵守真机优先 |
 | `LOOKIN_HOST` | `127.0.0.1` | Lookin 服务地址 |
-| `LOOKDEBUG_DEVICE_UDID` | 空 | 真机 UDID |
+| `LOOKDEBUG_DEVICE_UDID` | 空 | 可选真机 UDID；自动模式下用于优先匹配目标真机 |
 | `IPROXY_PATH` | `iproxy` | `iproxy` 命令或绝对路径 |
 | `LOOKIN_LOCAL_PORT` | `47175` | Lookin 本地端口 |
 | `LOOKIN_REMOTE_PORT` | `47175` | Lookin 设备端口 |
@@ -567,8 +580,8 @@ imageView.lookDebugAssetName = "figma_1739_12994_male"
 
 - 确认 `lookin-cli` 可执行。
 - 确认 App 已集成并启动 `LookinServer`。
-- 真机确认 `47175:47175` 转发成功，且 `LOOKIN_MODE=device`。
-- 模拟器确认 `LOOKIN_MODE=simulator`。
+- 真机确认 MCP 返回的 `runtimeTarget.mode=device`，并且 `47175:47175` 转发成功。
+- 无可用真机时确认 MCP 返回 `runtimeTarget.mode=simulator` 和 `fallbackReason`。
 
 ### Xcode Console 读取失败
 
@@ -578,7 +591,7 @@ imageView.lookDebugAssetName = "figma_1739_12994_male"
 
 ### 自动运行与手动 Xcode 冲突
 
-- 使用 `run_xcode_active_scheme`，不要让自动化工具直接调用 `xcodebuild`/`build_run_device` 去启动第二个调试会话。
+- 使用 `run_xcode_active_scheme`，不要让自动化工具直接调用 `xcodebuild`、XcodeBuildMCP `build_device` 或 `build_run_sim` 去启动第二个调试会话。
 - 确认 Xcode 当前选中的 scheme、Run configuration 和目标设备正确；该工具执行的就是当前 Xcode 窗口里的 `Command+R`。
 - 如果看不到新的 `LookDebugBridge ready`，检查 Run configuration 是否为 Debug，以及 AppDelegate 是否调用了 `LookDebugBridge.shared.startIfNeeded()`。
 

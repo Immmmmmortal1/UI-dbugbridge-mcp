@@ -115,6 +115,7 @@ export async function runEnvironmentPreflight({
   lookinClient,
   xcodeConsoleReader,
   requireLookin = true,
+  runtimeTarget = null,
 }) {
   const startedAt = Date.now();
   const portForward = await captureResult(() => portForwarder.ensureAll());
@@ -154,6 +155,7 @@ export async function runEnvironmentPreflight({
       mode: config.lookinMode,
       bridgeBaseURL: config.bridgeBaseURL,
       hasDeviceUDID: Boolean(config.deviceUDID),
+      runtimeTarget,
       checks,
       elapsedMs: Date.now() - startedAt,
     },

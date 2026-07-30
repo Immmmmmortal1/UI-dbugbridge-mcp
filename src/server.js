@@ -5,6 +5,7 @@ import { LookinClient } from "./lookinClient.js";
 import { PortForwarder } from "./portForwarder.js";
 import { XcodeConsoleReader } from "./xcodeConsoleReader.js";
 import { XcodeRunner } from "./xcodeRunner.js";
+import { applyRuntimeTarget, RuntimeTargetResolver } from "./runtimeTarget.js";
 import {
   buildRuntimeAuditReport,
   writeJSONArtifact,
@@ -17,6 +18,7 @@ const lookinClient = new LookinClient(config);
 const portForwarder = new PortForwarder(config);
 const xcodeConsoleReader = new XcodeConsoleReader();
 const xcodeRunner = new XcodeRunner();
+const runtimeTargetResolver = new RuntimeTargetResolver();
 
 const DEFAULT_PAGE_TIMEOUT_MS = 8000;
 const DEFAULT_PAGE_INTERVAL_MS = 300;
@@ -39,7 +41,7 @@ const LOOKIN_REQUIRED_TOOLS = new Set([
 const tools = [
   {
     name: "ping",
-    description: "Check whether Lookin CLI and the in-app DebugBridge are reachable.",
+    description: "Resolve a usable runtime target with physical-device priority, then check Lookin CLI and the in-app DebugBridge.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -48,7 +50,7 @@ const tools = [
   },
   {
     name: "ensure_ports",
-    description: "Ensure local iproxy port forwards for LookinServer and DebugBridge in device mode.",
+    description: "Resolve the runtime target first, then ensure local iproxy forwards when a physical device is available.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -57,7 +59,7 @@ const tools = [
   },
   {
     name: "run_xcode_active_scheme",
-    description: "Bring Xcode to the front and run the currently selected scheme with Command+R, keeping Xcode Console/Debugger in the same user-visible session.",
+    description: "Fixed launch path: activate the existing Xcode window, send Command+R for its selected scheme/destination, then wait for LookDebugBridge ready.",
     inputSchema: {
       type: "object",
       properties: {
@@ -81,7 +83,7 @@ const tools = [
         },
         waitForReady: {
           type: "boolean",
-          description: "Wait for a fresh Xcode Console ready marker after Command+R. Defaults to true.",
+          description: "Deprecated compatibility field. The MCP always waits for a fresh Xcode Console ready marker after Command+R.",
         },
         readyQuery: {
           type: "string",
@@ -1076,6 +1078,12 @@ async function runFlow(steps) {
 }
 
 async function dispatchTool(name, args) {
+  const targetResult = await runtimeTargetResolver.resolve(config);
+  if (!targetResult.success) {
+    return makeToolResult("runtime_target_resolver", targetResult);
+  }
+  applyRuntimeTarget(config, targetResult.payload);
+
   const shouldRunPreflight = name === "ping" || !PREFLIGHT_BOOTSTRAP_TOOLS.has(name);
   const preflight = shouldRunPreflight
     ? await runEnvironmentPreflight({
@@ -1085,6 +1093,7 @@ async function dispatchTool(name, args) {
         lookinClient,
         xcodeConsoleReader,
         requireLookin: LOOKIN_REQUIRED_TOOLS.has(name),
+        runtimeTarget: targetResult.payload,
       })
     : null;
 
@@ -1097,8 +1106,11 @@ async function dispatchTool(name, args) {
       return makeToolResult("iproxy", await portForwarder.ensureAll());
     case "run_xcode_active_scheme": {
       const runResult = await xcodeRunner.runActiveScheme(args);
-      if (!runResult.success || args.waitForReady === false) {
-        return makeToolResult("xcode_active_scheme_runner", runResult);
+      if (!runResult.success) {
+        return makeToolResult("xcode_active_scheme_runner", {
+          ...runResult,
+          payload: { ...(runResult.payload ?? {}), runtimeTarget: targetResult.payload },
+        });
       }
 
       const readyResult = await xcodeConsoleReader.wait({
@@ -1113,6 +1125,7 @@ async function dispatchTool(name, args) {
         success: readyMatched,
         payload: {
           run: runResult.payload,
+          runtimeTarget: targetResult.payload,
           ready: readyResult.payload,
         },
         error: readyMatched ? null : readyResult.error || "xcode_run_ready_marker_timeout",
