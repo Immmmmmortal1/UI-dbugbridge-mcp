@@ -141,6 +141,35 @@ struct LookDebugRuntimeNodeResponse: Codable, Equatable {
     let error: String?
 }
 
+struct LookDebugWindowTreeNode: Codable, Equatable {
+    let className: String
+    let accessibilityIdentifier: String?
+    let accessibilityLabel: String?
+    let accessibilityValue: String?
+    let frameInWindow: LookDebugRuntimeRect
+    let hidden: Bool
+    let alpha: Double
+    let userInteractionEnabled: Bool
+    let text: String?
+    let children: [LookDebugWindowTreeNode]
+}
+
+struct LookDebugWindowTree: Codable, Equatable {
+    let className: String
+    let isKeyWindow: Bool
+    let windowLevel: Double
+    let hidden: Bool
+    let frameInWindow: LookDebugRuntimeRect
+    let root: LookDebugWindowTreeNode?
+}
+
+struct LookDebugWindowTreeResponse: Codable, Equatable {
+    let success: Bool
+    let windows: [LookDebugWindowTree]
+    let truncated: Bool
+    let error: String?
+}
+
 struct LookDebugErrorResponse: Codable, Equatable {
     let success: Bool
     let error: String

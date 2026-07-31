@@ -112,3 +112,39 @@ test("tools list includes runtime node inspector", async (t) => {
   const names = response.result.tools.map((tool) => tool.name);
   assert.equal(names.includes("get_runtime_node"), true);
 });
+
+test("tools list exposes DebugBridge logs and removes Xcode/Lookin fallbacks", async (t) => {
+  const server = spawn(process.execPath, ["src/server.js"], {
+    cwd: new URL("..", import.meta.url),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  t.after(() => server.kill());
+
+  server.stdin.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "transport-test", version: "1.0.0" },
+    },
+  })}\n`);
+  await readJSONLine(server.stdout);
+
+  server.stdin.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/list",
+    params: {},
+  })}\n`);
+
+  const response = await readJSONLine(server.stdout);
+  const names = response.result.tools.map((tool) => tool.name);
+  assert.equal(names.includes("read_app_logs"), true);
+  assert.equal(names.includes("wait_app_logs"), true);
+  assert.equal(names.includes("inspect_ui"), true);
+  assert.equal(names.includes("run_xcode_active_scheme"), false);
+  assert.equal(names.includes("read_xcode_console"), false);
+  assert.equal(names.includes("wait_xcode_console"), false);
+});

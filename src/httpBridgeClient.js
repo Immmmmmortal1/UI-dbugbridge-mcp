@@ -2,6 +2,16 @@ function joinURL(baseURL, pathname) {
   return new URL(pathname, baseURL).toString();
 }
 
+function withQuery(pathname, values) {
+  const url = new URL(pathname, "http://lookdebug.invalid");
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return `${url.pathname}${url.search}`;
+}
+
 async function decodeJSON(response) {
   const text = await response.text();
   if (!text) {
@@ -38,6 +48,20 @@ export class HTTPBridgeClient {
 
   async getRuntimeNode(anchor) {
     return this.#request("POST", "/debug/runtime/node", { anchor });
+  }
+
+  async getWindowTree({ depth, includeHidden = false, maxNodes } = {}) {
+    return this.#request(
+      "GET",
+      withQuery("/debug/windows", { depth, include_hidden: includeHidden, max_nodes: maxNodes })
+    );
+  }
+
+  async readLogs({ query, level, category, limit, waitMs } = {}) {
+    return this.#request(
+      "GET",
+      withQuery("/debug/logs", { query, level, category, limit, wait_ms: waitMs })
+    );
   }
 
   async ping() {

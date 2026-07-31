@@ -79,7 +79,7 @@ test("resolver reports devicectl failures instead of silently falling back", asy
     },
   });
 
-  const result = await resolver.resolve({ requestedLookinMode: "auto", deviceUDID: "" });
+  const result = await resolver.resolve({ deviceUDID: "" });
   assert.equal(result.success, false);
   assert.match(result.error, /physical_device_detection_failed:xcrun_missing/);
 });

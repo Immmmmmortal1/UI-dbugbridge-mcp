@@ -1,10 +1,8 @@
 import { loadConfig } from "./config.js";
 import { runEnvironmentPreflight } from "./environmentPreflight.js";
 import { HTTPBridgeClient } from "./httpBridgeClient.js";
-import { LookinClient } from "./lookinClient.js";
 import { PortForwarder } from "./portForwarder.js";
-import { XcodeConsoleReader } from "./xcodeConsoleReader.js";
-import { XcodeRunner } from "./xcodeRunner.js";
+import { ScreenshotClient } from "./screenshotClient.js";
 import { applyRuntimeTarget, RuntimeTargetResolver } from "./runtimeTarget.js";
 import {
   buildRuntimeAuditReport,
@@ -14,34 +12,17 @@ import {
 
 const config = loadConfig();
 const bridgeClient = new HTTPBridgeClient({ baseURL: config.bridgeBaseURL });
-const lookinClient = new LookinClient(config);
 const portForwarder = new PortForwarder(config);
-const xcodeConsoleReader = new XcodeConsoleReader();
-const xcodeRunner = new XcodeRunner();
+const screenshotClient = new ScreenshotClient(config);
 const runtimeTargetResolver = new RuntimeTargetResolver();
 
 const DEFAULT_PAGE_TIMEOUT_MS = 8000;
 const DEFAULT_PAGE_INTERVAL_MS = 300;
 const DEFAULT_POST_ACTION_WAIT_MS = 350;
-const DEFAULT_XCODE_READY_TIMEOUT_MS = 60000;
-const DEFAULT_XCODE_READY_INTERVAL_MS = 1000;
-const DEFAULT_XCODE_READY_QUERY = "LookDebugBridge ready";
-const PREFLIGHT_BOOTSTRAP_TOOLS = new Set([
-  "ensure_ports",
-  "read_xcode_console",
-  "wait_xcode_console",
-  "run_xcode_active_scheme",
-]);
-const LOOKIN_REQUIRED_TOOLS = new Set([
-  "ping",
-  "inspect_ui",
-  "get_ui_hierarchy",
-]);
-
 const tools = [
   {
     name: "ping",
-    description: "Resolve a usable runtime target with physical-device priority, then check Lookin CLI and the in-app DebugBridge.",
+    description: "Require a connected physical iOS device, then check the in-app DebugBridge.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -50,7 +31,7 @@ const tools = [
   },
   {
     name: "ensure_ports",
-    description: "Resolve the runtime target first, then ensure local iproxy forwards when a physical device is available.",
+    description: "Require a connected physical device and ensure the DebugBridge port is forwarded.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -58,56 +39,8 @@ const tools = [
     },
   },
   {
-    name: "run_xcode_active_scheme",
-    description: "Fixed launch path: activate the existing Xcode window, send Command+R for its selected scheme/destination, then wait for LookDebugBridge ready.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        activateDelayMs: {
-          type: "integer",
-          minimum: 0,
-          maximum: 5000,
-          description: "Delay after activating Xcode before sending Command+R. Defaults to 500.",
-        },
-        windowReadyTimeoutMs: {
-          type: "integer",
-          minimum: 0,
-          maximum: 30000,
-          description: "Maximum time to wait for an Xcode window after activation. Defaults to 8000.",
-        },
-        windowReadyIntervalMs: {
-          type: "integer",
-          minimum: 50,
-          maximum: 5000,
-          description: "Polling interval while waiting for the Xcode window. Defaults to 250.",
-        },
-        waitForReady: {
-          type: "boolean",
-          description: "Deprecated compatibility field. The MCP always waits for a fresh Xcode Console ready marker after Command+R.",
-        },
-        readyQuery: {
-          type: "string",
-          description: "Console substring that proves the debug runtime started. Defaults to LookDebugBridge ready.",
-        },
-        readyTimeoutMs: {
-          type: "integer",
-          minimum: 0,
-          maximum: 120000,
-          description: "Maximum time to wait for readyQuery. Defaults to 60000.",
-        },
-        readyIntervalMs: {
-          type: "integer",
-          minimum: 250,
-          maximum: 10000,
-          description: "Polling interval while waiting for readyQuery. Defaults to 1000.",
-        },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
     name: "inspect_ui",
-    description: "Read the visible UI hierarchy via lookin-cli.",
+    description: "Read the current App UIWindow/UIView tree directly from DebugBridge.",
     inputSchema: {
       type: "object",
       properties: {
@@ -116,21 +49,19 @@ const tools = [
           minimum: 0,
           description: "Optional tree depth limit.",
         },
-        filter: {
-          type: "string",
-          description: "Optional class-name filter passed to lookin-cli.",
-        },
-        json: {
+        includeHidden: {
           type: "boolean",
-          description: "Request JSON output from lookin-cli when supported.",
+          description: "Include hidden or transparent nodes. Defaults to false.",
         },
-        raw: {
-          type: "boolean",
-          description: "Request raw hierarchy data from lookin-cli.",
+        maxNodes: {
+          type: "integer",
+          minimum: 1,
+          maximum: 10000,
+          description: "Maximum nodes returned. Defaults to 2000.",
         },
         color: {
           type: "boolean",
-          description: "Keep ANSI color codes in text output. Defaults to false.",
+          description: "Deprecated compatibility field; ignored.",
         },
       },
       additionalProperties: false,
@@ -196,6 +127,35 @@ const tools = [
         },
       },
       required: ["anchor"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "read_app_logs",
+    description: "Search the current app run's in-memory DebugBridge log pool. Logs are temporary and are not written to disk or addressed by cursor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional case-insensitive substring matched against log messages." },
+        level: { type: "string", description: "Optional exact level filter, such as debug, info, or error." },
+        category: { type: "string", description: "Optional exact category filter." },
+        limit: { type: "integer", minimum: 1, maximum: 5000, description: "Maximum most-recent matching entries. Defaults to 500." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "wait_app_logs",
+    description: "Wait for a new matching entry in the current app run's in-memory DebugBridge log pool; no cursor is required or returned.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional case-insensitive substring matched against log messages." },
+        level: { type: "string", description: "Optional exact level filter, such as debug, info, or error." },
+        category: { type: "string", description: "Optional exact category filter." },
+        limit: { type: "integer", minimum: 1, maximum: 5000, description: "Maximum most-recent matching entries. Defaults to 500." },
+        waitMs: { type: "integer", minimum: 1, maximum: 120000, description: "Maximum wait time. Defaults to 30000." },
+      },
       additionalProperties: false,
     },
   },
@@ -671,36 +631,6 @@ const tools = [
     },
   },
   {
-    name: "read_xcode_console",
-    description: "Read and filter the existing Xcode Debug Console on demand without duplicating or persisting logs.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Optional case-insensitive substring. Returns the most recent matches." },
-        tailLines: { type: "integer", minimum: 1, maximum: 2000, description: "Lines returned when query is absent. Defaults to 100." },
-        maxResults: { type: "integer", minimum: 1, maximum: 500, description: "Maximum matching lines. Defaults to 100." },
-        maxCharsPerLine: { type: "integer", minimum: 1, maximum: 10000, description: "Maximum characters returned per line. Defaults to 2000." },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "wait_xcode_console",
-    description: "Wait for new Xcode Debug Console lines after the call starts; stores only a transient character offset.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Optional case-insensitive substring to wait for." },
-        tailLines: { type: "integer", minimum: 1, maximum: 2000, description: "New lines returned when query is absent. Defaults to 100." },
-        maxResults: { type: "integer", minimum: 1, maximum: 500, description: "Maximum matching lines. Defaults to 100." },
-        maxCharsPerLine: { type: "integer", minimum: 1, maximum: 10000, description: "Maximum characters returned per line. Defaults to 2000." },
-        timeoutMs: { type: "integer", minimum: 0, maximum: 120000, description: "Maximum wait time. Defaults to 30000." },
-        intervalMs: { type: "integer", minimum: 250, maximum: 10000, description: "Polling interval. Defaults to 1000." },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
     name: "get_screenshot",
     description: "Capture a screenshot using the configured screenshot command.",
     inputSchema: {
@@ -720,7 +650,7 @@ const tools = [
   },
   {
     name: "get_ui_hierarchy",
-    description: "Deprecated alias of inspect_ui with json=true.",
+    description: "Deprecated alias of inspect_ui using the current App UIWindow/UIView tree.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -1084,18 +1014,12 @@ async function dispatchTool(name, args) {
   }
   applyRuntimeTarget(config, targetResult.payload);
 
-  const shouldRunPreflight = name === "ping" || !PREFLIGHT_BOOTSTRAP_TOOLS.has(name);
-  const preflight = shouldRunPreflight
-    ? await runEnvironmentPreflight({
-        config,
-        portForwarder,
-        bridgeClient,
-        lookinClient,
-        xcodeConsoleReader,
-        requireLookin: LOOKIN_REQUIRED_TOOLS.has(name),
-        runtimeTarget: targetResult.payload,
-      })
-    : null;
+  const preflight = await runEnvironmentPreflight({
+    config,
+    portForwarder,
+    bridgeClient,
+    runtimeTarget: targetResult.payload,
+  });
 
   if (name === "ping" || preflight?.success === false) {
     return makeToolResult("lookdebug_environment_preflight", preflight);
@@ -1104,39 +1028,27 @@ async function dispatchTool(name, args) {
   switch (name) {
     case "ensure_ports":
       return makeToolResult("iproxy", await portForwarder.ensureAll());
-    case "run_xcode_active_scheme": {
-      const runResult = await xcodeRunner.runActiveScheme(args);
-      if (!runResult.success) {
-        return makeToolResult("xcode_active_scheme_runner", {
-          ...runResult,
-          payload: { ...(runResult.payload ?? {}), runtimeTarget: targetResult.payload },
+    case "inspect_ui":
+      {
+        const result = await bridgeClient.getWindowTree(args);
+        return makeToolResult("debug_bridge", {
+          success: bridgeResultOK(result),
+          payload: result.payload,
+          error: bridgeError(result),
         });
       }
-
-      const readyResult = await xcodeConsoleReader.wait({
-        query: args.readyQuery || DEFAULT_XCODE_READY_QUERY,
-        timeoutMs: args.readyTimeoutMs ?? DEFAULT_XCODE_READY_TIMEOUT_MS,
-        intervalMs: args.readyIntervalMs ?? DEFAULT_XCODE_READY_INTERVAL_MS,
-        maxResults: 20,
-        maxCharsPerLine: 4000,
+    case "read_app_logs":
+    case "wait_app_logs": {
+      const result = await bridgeClient.readLogs({
+        ...args,
+        waitMs: name === "wait_app_logs" ? (args.waitMs ?? 30_000) : 0,
       });
-      const readyMatched = readyResult.success && readyResult.payload?.status === "matched";
-      return makeToolResult("xcode_active_scheme_runner", {
-        success: readyMatched,
-        payload: {
-          run: runResult.payload,
-          runtimeTarget: targetResult.payload,
-          ready: readyResult.payload,
-        },
-        error: readyMatched ? null : readyResult.error || "xcode_run_ready_marker_timeout",
+      return makeToolResult("debug_bridge_logs", {
+        success: bridgeResultOK(result),
+        payload: result.payload,
+        error: bridgeError(result),
       });
     }
-    case "read_xcode_console":
-      return makeToolResult("xcode_debug_console", await xcodeConsoleReader.read(args));
-    case "wait_xcode_console":
-      return makeToolResult("xcode_debug_console", await xcodeConsoleReader.wait(args));
-    case "inspect_ui":
-      return makeToolResult("lookin_cli", await lookinClient.getUIHierarchy(args));
     case "get_debug_page":
     case "get_page": {
       let pageResult;
@@ -1441,10 +1353,16 @@ async function dispatchTool(name, args) {
         });
       }
     }
-    case "get_ui_hierarchy":
-      return makeToolResult("lookin_cli", await lookinClient.getUIHierarchy({ json: true }));
+    case "get_ui_hierarchy": {
+      const result = await bridgeClient.getWindowTree({ depth: 8, maxNodes: 2_000 });
+      return makeToolResult("debug_bridge", {
+        success: bridgeResultOK(result),
+        payload: result.payload,
+        error: bridgeError(result),
+      });
+    }
     case "get_screenshot":
-      return makeToolResult("screenshot_command", await lookinClient.getScreenshot());
+      return makeToolResult("screenshot_command", await screenshotClient.getScreenshot());
     default:
       throw new Error(`unknown_tool:${name}`);
   }

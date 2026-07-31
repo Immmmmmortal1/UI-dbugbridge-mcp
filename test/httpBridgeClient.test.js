@@ -59,3 +59,29 @@ test("getRuntimeNode posts runtime anchor to DebugBridge", async () => {
   assert.equal(calls[0].options.method, "POST");
   assert.deepEqual(JSON.parse(calls[0].options.body), { anchor: "figma.1739_13055" });
 });
+
+test("getWindowTree reads the app UIWindow tree with query parameters", async () => {
+  const { calls, fetchImpl } = makeFetchRecorder({ success: true, windows: [] });
+  const client = new HTTPBridgeClient({ baseURL: "http://127.0.0.1:37777", fetchImpl });
+
+  await client.getWindowTree({ depth: 4, includeHidden: true, maxNodes: 100 });
+
+  assert.equal(
+    calls[0].url,
+    "http://127.0.0.1:37777/debug/windows?depth=4&include_hidden=true&max_nodes=100"
+  );
+  assert.equal(calls[0].options.method, "GET");
+});
+
+test("readLogs searches the current app pool without a cursor", async () => {
+  const { calls, fetchImpl } = makeFetchRecorder({ success: true, status: "matched", lines: [] });
+  const client = new HTTPBridgeClient({ baseURL: "http://127.0.0.1:37777", fetchImpl });
+
+  await client.readLogs({ query: "upload", level: "error", category: "api", limit: 20 });
+
+  assert.equal(
+    calls[0].url,
+    "http://127.0.0.1:37777/debug/logs?query=upload&level=error&category=api&limit=20"
+  );
+  assert.doesNotMatch(calls[0].url, /cursor|offset/);
+});

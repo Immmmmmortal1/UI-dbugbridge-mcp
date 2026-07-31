@@ -4,11 +4,32 @@ import UIKit
 public final class LookDebugBridge {
     public static let shared = LookDebugBridge()
 
+    public nonisolated static let sessionID =
+        (ProcessInfo.processInfo.environment["DEV_FLOW_SESSION_ID"]?.isEmpty == false
+            ? ProcessInfo.processInfo.environment["DEV_FLOW_SESSION_ID"]!
+            : (ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]?.isEmpty == false
+                ? ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]!
+                : "local"))
+
     private let server: LookDebugBridgeServer
     private var hasStarted = false
 
     public convenience init(port: UInt16 = 37777) {
         self.init(server: LookDebugBridgeServer(port: port))
+    }
+
+    public nonisolated static func log(
+        _ message: String,
+        level: String = "info",
+        category: String = "app"
+    ) {
+        Task {
+            await LookDebugLogStore.shared.append(
+                level: level,
+                category: category,
+                message: message
+            )
+        }
     }
 
     init(server: LookDebugBridgeServer) {
@@ -20,36 +41,14 @@ public final class LookDebugBridge {
         hasStarted = true
 
         LookDebugAccessibilityInstaller.installIfNeeded()
-        startLookinIfAvailable()
-
         do {
             try server.start { [weak self] in
                 self?.currentViewController()
             }
-            print("LookDebugBridge ready")
+            Self.log("LookDebugBridge ready", category: "bridge")
         } catch {
-            print("LookDebugBridge failed to start: \(error)")
+            Self.log("LookDebugBridge failed to start: \(error)", level: "error", category: "bridge")
         }
-    }
-
-    private func startLookinIfAvailable() {
-        guard let connectionManagerClass = NSClassFromString("LKS_ConnectionManager") else {
-            print("LookinServer class not found")
-            return
-        }
-
-        let manager = (connectionManagerClass as AnyObject)
-            .perform(NSSelectorFromString("sharedInstance"))?
-            .takeUnretainedValue()
-        guard manager != nil else {
-            print("LookinServer manager not available")
-            return
-        }
-
-        // LookinServer owns listener startup through UIApplication lifecycle events.
-        // Triggering its private search method here races with didBecomeActive and can
-        // move the listener from 47175 to 47176 while iproxy still forwards 47175.
-        print("LookinServer loaded; listener follows app lifecycle")
     }
 
     private func currentViewController() -> UIViewController? {

@@ -1,11 +1,10 @@
 Pod::Spec.new do |s|
   s.name = "LookDebugBridge"
-  s.version = "0.1.3"
-  s.summary = "A debug-only HTTP action bridge for AI-driven iOS UI inspection and control."
+  s.version = "0.1.5"
+  s.summary = "A debug-only HTTP bridge for AI-driven iOS UI inspection, control, and logs."
   s.description = <<-DESC
-    LookDebugBridge pairs with LookinServer and lookdebug-mcp. LookinServer is used
-    for UI hierarchy inspection, while LookDebugBridge exposes stable debug element
-    actions such as tap and switch control through a local HTTP bridge.
+    LookDebugBridge exposes stable debug element actions, UIWindow hierarchy inspection,
+    and temporary in-memory App logs through a local HTTP bridge.
   DESC
   s.homepage = "https://github.com/Immmmmmortal1/ui_lookin_debugbridge"
   s.license = { :type => "MIT", :file => "LICENSE" }
@@ -16,5 +15,4 @@ Pod::Spec.new do |s|
   s.swift_versions = ["5.0"]
   s.source_files = "Sources/LookDebugBridge/**/*.swift"
   s.frameworks = ["UIKit", "Network"]
-  s.dependency "LookinServer/Swift"
 end

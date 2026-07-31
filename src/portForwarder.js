@@ -28,17 +28,6 @@ export class PortForwarder {
   }
 
   async ensureAll() {
-    if (this.config.lookinMode !== "device") {
-      return {
-        success: true,
-        payload: {
-          mode: this.config.lookinMode,
-          skipped: true,
-          reason: "port_forwarding_only_needed_for_device_mode",
-        },
-      };
-    }
-
     if (!this.config.deviceUDID) {
       return {
         success: false,

@@ -80,13 +80,21 @@ export class RuntimeTargetResolver {
         { maxBuffer: 4 * 1024 * 1024, timeout: 15000 }
       );
       const devices = parseDevicectlDevices(stdout);
+      const target = selectRuntimeTarget({
+        devices,
+        requestedMode: "device",
+        requestedDeviceUDID: config.deviceUDID,
+      });
+      if (target.mode !== "device") {
+        return {
+          success: false,
+          payload: target,
+          error: "physical_device_required",
+        };
+      }
       return {
         success: true,
-        payload: selectRuntimeTarget({
-          devices,
-          requestedMode: config.requestedLookinMode || config.lookinMode,
-          requestedDeviceUDID: config.deviceUDID,
-        }),
+        payload: target,
         error: null,
       };
     } catch (error) {
@@ -100,7 +108,6 @@ export class RuntimeTargetResolver {
 }
 
 export function applyRuntimeTarget(config, target) {
-  config.lookinMode = target.mode;
   config.deviceUDID = target.deviceUDID;
   config.runtimeTarget = target;
   return config;

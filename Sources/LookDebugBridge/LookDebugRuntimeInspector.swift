@@ -17,6 +17,35 @@ struct LookDebugRuntimeInspector {
         )
     }
 
+    func windowTree(depth: Int, includeHidden: Bool, maxNodes: Int) -> LookDebugWindowTreeResponse {
+        let state = TreeBuildState(maxNodes: max(1, min(maxNodes, 10_000)))
+        let boundedDepth = max(0, min(depth, 24))
+        let windows = activeWindows().compactMap { window -> LookDebugWindowTree? in
+            guard includeHidden || (!window.isHidden && window.alpha > 0.01) else { return nil }
+            return LookDebugWindowTree(
+                className: String(describing: type(of: window)),
+                isKeyWindow: window.isKeyWindow,
+                windowLevel: Double(window.windowLevel.rawValue),
+                hidden: window.isHidden,
+                frameInWindow: rectPayload(window.convert(window.bounds, to: nil)),
+                root: treeNode(
+                    window,
+                    depth: 0,
+                    maxDepth: boundedDepth,
+                    includeHidden: includeHidden,
+                    state: state
+                )
+            )
+        }
+
+        return LookDebugWindowTreeResponse(
+            success: true,
+            windows: windows,
+            truncated: state.truncated,
+            error: nil
+        )
+    }
+
     private func matchingViews(anchor: String) -> [UIView] {
         var results: [UIView] = []
 
@@ -29,6 +58,53 @@ struct LookDebugRuntimeInspector {
         }
 
         return results
+    }
+
+    private func treeNode(
+        _ view: UIView,
+        depth: Int,
+        maxDepth: Int,
+        includeHidden: Bool,
+        state: TreeBuildState
+    ) -> LookDebugWindowTreeNode? {
+        guard includeHidden || (!view.isHidden && view.alpha > 0.01) else { return nil }
+        guard state.reserve() else { return nil }
+
+        let children: [LookDebugWindowTreeNode]
+        if depth >= maxDepth {
+            children = []
+        } else {
+            children = view.subviews.compactMap { subview in
+                treeNode(
+                    subview,
+                    depth: depth + 1,
+                    maxDepth: maxDepth,
+                    includeHidden: includeHidden,
+                    state: state
+                )
+            }
+        }
+
+        return LookDebugWindowTreeNode(
+            className: String(describing: type(of: view)),
+            accessibilityIdentifier: view.accessibilityIdentifier,
+            accessibilityLabel: view.accessibilityLabel,
+            accessibilityValue: view.accessibilityValue,
+            frameInWindow: rectPayload(view.convert(view.bounds, to: nil)),
+            hidden: view.isHidden,
+            alpha: Double(view.alpha),
+            userInteractionEnabled: view.isUserInteractionEnabled,
+            text: textValue(for: view),
+            children: children
+        )
+    }
+
+    private func textValue(for view: UIView) -> String? {
+        if let label = view as? UILabel { return label.text }
+        if let textField = view as? UITextField { return textField.text ?? textField.placeholder }
+        if let textView = view as? UITextView { return textView.text }
+        if let button = view as? UIButton { return button.title(for: .normal) }
+        return nil
     }
 
     private func activeWindows() -> [UIWindow] {
@@ -179,6 +255,25 @@ struct LookDebugRuntimeInspector {
         case .alwaysTemplate: return "alwaysTemplate"
         @unknown default: return "unknown"
         }
+    }
+}
+
+private final class TreeBuildState {
+    private let maxNodes: Int
+    private(set) var nodeCount = 0
+    private(set) var truncated = false
+
+    init(maxNodes: Int) {
+        self.maxNodes = maxNodes
+    }
+
+    func reserve() -> Bool {
+        guard nodeCount < maxNodes else {
+            truncated = true
+            return false
+        }
+        nodeCount += 1
+        return true
     }
 }
 
