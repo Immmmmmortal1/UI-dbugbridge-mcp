@@ -6,10 +6,10 @@ Pod::Spec.new do |s|
     LookDebugBridge exposes stable debug element actions, UIWindow hierarchy inspection,
     and temporary in-memory App logs through a local HTTP bridge.
   DESC
-  s.homepage = "https://github.com/Immmmmmortal1/ui_lookin_debugbridge"
+  s.homepage = "https://github.com/Immmmmmortal1/UI-dbugbridge-mcp"
   s.license = { :type => "MIT", :file => "LICENSE" }
   s.author = { "Shuxia" => "opensource@shuxia.local" }
-  s.source = { :git => "https://github.com/Immmmmmortal1/ui_lookin_debugbridge.git", :tag => s.version.to_s }
+  s.source = { :git => "https://github.com/Immmmmmortal1/UI-dbugbridge-mcp.git", :tag => s.version.to_s }
 
   s.ios.deployment_target = "14.0"
   s.swift_versions = ["5.0"]

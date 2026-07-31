@@ -1,4 +1,4 @@
-# ui_lookin_debugbridge
+# UI-dbugbridge-mcp
 
 LoveOn 的 Mac 侧 MCP Server，配合 iOS App 内的 `LookDebugBridge`，提供三类能力：
 
@@ -23,7 +23,7 @@ target 'YourApp' do
   use_frameworks!
 
   pod 'LookDebugBridge',
-      :path => '../UI-lookin-dbugbridge',
+      :path => '../UI-dbugbridge-mcp',
       :configurations => ['Debug']
 end
 ```
@@ -68,12 +68,12 @@ npm test
 Codex MCP 配置示例：
 
 ```toml
-[mcp_servers.ui_lookin_debugbridge]
+[mcp_servers.ui_dbugbridge_mcp]
 command = "/absolute/path/to/node"
-args = ["/absolute/path/ui_lookin_debugbridge/src/server.js"]
+args = ["/absolute/path/UI-dbugbridge-mcp/src/server.js"]
 startup_timeout_sec = 30.0
 
-[mcp_servers.ui_lookin_debugbridge.env]
+[mcp_servers.ui_dbugbridge_mcp.env]
 BRIDGE_BASE_URL = "http://127.0.0.1:37777"
 LOOKDEBUG_DEVICE_UDID = "<physical-device-udid>"
 IPROXY_PATH = "iproxy"
