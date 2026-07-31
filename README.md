@@ -1,40 +1,61 @@
 # UI-dbugbridge-mcp
 
-LoveOn 的 Mac 侧 MCP Server，配合 iOS App 内的 `LookDebugBridge`，提供三类能力：
+`UI-dbugbridge-mcp` 是 Mac 侧的 MCP Server。它通过 stdio 接收 MCP 请求，再通过 `iproxy` 访问运行在 iOS App 内的 `LookDebugBridge` HTTP 服务。
 
-1. 通过稳定 ID 操作 UI；
-2. 读取 App 当前 `UIWindow`/`UIView` 节点树并验证运行态 UI；
-3. 读取当前 App 运行实例的临时内存日志池。
+本仓库只负责 MCP 编排，不负责编译、安装或启动 App。真机编译安装由 XcodeBuildMCP 的 `build_run_device` 完成。
 
-日志不写文件、不跨运行保留、不使用 cursor/offset。每次 App 进程重新启动都会创建新的日志池，MCP 直接按 query、level、category 检索完整当前池；`wait_app_logs` 只在当前请求内等待新匹配日志。
+## 两个仓库的职责
 
-## 固定运行规则
+| 仓库 | 职责 |
+| --- | --- |
+| `UI-dbugbridge-mcp` | Mac 侧 MCP Server：真机预检、端口转发、UI 操作、UI 树读取、日志读取、运行态校验 |
+| `LookDebugBridgeService` | iOS Debug Pod：在 App 进程内启动 HTTP Bridge，提供 UI、UI 树和临时内存日志能力 |
 
-- LoveOn 调试只使用物理设备。
-- App 通过 XcodeBuildMCP `build_run_device` 编译、安装并启动。
-- 不激活 Xcode scheme，不发送 `Command+R`，不使用 Xcode Console 或 Lookin CLI。
-- 设备端只启动 DebugBridge HTTP 服务；Mac 侧通过 `iproxy` 转发 `37777:37777`。
-- `DEV_FLOW_SESSION_ID` 只作为当前调试上下文标识返回，不作为日志文件路径或读取游标。
+## 当前运行约束
+
+- 只允许物理 iOS 设备。
+- App 必须由 `build_run_device` 编译、安装并启动。
+- 不激活 Xcode scheme，不发送 `Command+R`。
+- 不读取 Xcode Console，不调用 Lookin CLI。
+- App 端 Bridge 默认监听 `37777`；Mac 端通过 `iproxy` 转发到 `127.0.0.1:37777`。
+- MCP 每次调用业务工具前都会执行物理设备和 DebugBridge 预检；`ensure_ports`、`ping` 仍可用于显式诊断。
+
+没有连接、开发者模式未开启或 Developer Disk Image 服务不可用的物理设备时，返回 `physical_device_required`，不会静默切换到模拟器。
 
 ## App 侧接入
+
+### CocoaPods
+
+正式接入使用独立 Pod 仓库：
 
 ```ruby
 target 'YourApp' do
   use_frameworks!
 
   pod 'LookDebugBridge',
-      :path => '../UI-dbugbridge-mcp',
+      :git => 'git@github.com:Immmmmmortal1/LookDebugBridgeService.git',
+      :tag => '0.1.5',
       :configurations => ['Debug']
 end
 ```
 
-也可以使用远程 Pod 源；关键是不要再添加 `LookinServer`。执行：
+本地开发时可以使用 Pod 仓库目录：
+
+```ruby
+pod 'LookDebugBridge',
+    :path => '../shuxiamcp/LookDebugBridgeService',
+    :configurations => ['Debug']
+```
+
+不要再添加 `LookinServer`。执行：
 
 ```bash
 pod install
 ```
 
-在 App 启动时启动 Bridge：
+### 启动 Bridge
+
+在 App 启动阶段，仅 Debug 构建启动服务：
 
 ```swift
 #if DEBUG
@@ -46,7 +67,23 @@ Task { @MainActor in
 #endif
 ```
 
-日志统一从 App 的 Debug 日志入口转发：
+Bridge 启动后提供：
+
+| HTTP 接口 | 用途 |
+| --- | --- |
+| `GET /ping` | 检查 Bridge 是否可用 |
+| `GET /debug/page` | 读取当前语义页面和注册元素 |
+| `GET /debug/windows` | 读取当前 UIWindow/UIView 树 |
+| `POST /debug/runtime/node` | 按 accessibility anchor 读取运行态节点 |
+| `POST /debug/tap` | 点击注册元素 |
+| `POST /debug/switch` | 设置 UISwitch |
+| `POST /debug/text/set` | 替换 UITextField/UITextView 文本 |
+| `POST /debug/text/type` | 追加 UITextField/UITextView 文本 |
+| `GET /debug/logs` | 查询或等待当前 App 进程的日志 |
+
+### 日志接入
+
+业务 Debug 日志必须进入 `LookDebugBridge.log`，或由 App 的 Debug 日志入口统一转发：
 
 ```swift
 #if DEBUG
@@ -54,22 +91,89 @@ LovOnDebugLog.error("request failed", category: "api")
 #endif
 ```
 
-Bridge 监听 `37777`。`LookDebugBridge.log(_:level:category:)` 会把日志放入进程内 actor 日志池；App 进程结束后日志自然消失。
+日志级别和分类是自由字符串，不限于固定枚举。`level` 和 `category` 查询为不区分大小写的精确匹配，`query` 为不区分大小写的消息子串匹配。
+
+## 日志生命周期和查询规则
+
+日志是 App 进程内的临时内存池：
+
+- 不写本地文件；
+- 不跨 App 进程保留；
+- App 重启后创建新的日志池；
+- 不使用 cursor、offset 或读取位置；
+- `read_app_logs` 直接检索当前进程已经产生的完整日志池，默认返回最近 500 条，最多 5000 条；
+- `wait_app_logs` 只等待本次请求开始后产生的、符合条件的新日志，最多等待 120 秒；
+- `sessionID` 是 App 本次进程生成的调试会话标识，不是文件目录，也不是日志游标；
+- `DEV_FLOW_SESSION_ID` 是 DevFlow/MCP 上下文标识，两者用途不同。
+
+日志返回结构：
+
+```json
+{
+  "success": true,
+  "sessionID": "app-process-session-id",
+  "status": "matched",
+  "lines": [
+    {
+      "timestamp": "2026-07-31T06:00:00Z",
+      "level": "error",
+      "category": "api",
+      "message": "request failed"
+    }
+  ],
+  "error": null
+}
+```
+
+`status` 的含义：
+
+| status | 含义 |
+| --- | --- |
+| `matched` | 找到符合条件的日志 |
+| `empty` | 当前池没有符合条件的日志（立即查询） |
+| `timeout` | 等待超时，期间没有符合条件的新日志 |
+
+查询示例：
+
+```json
+{
+  "name": "read_app_logs",
+  "arguments": {
+    "query": "upload",
+    "category": "oss",
+    "limit": 50
+  }
+}
+```
+
+等待示例：
+
+```json
+{
+  "name": "wait_app_logs",
+  "arguments": {
+    "query": "completed",
+    "level": "info",
+    "waitMs": 30000
+  }
+}
+```
 
 ## Mac 侧安装与配置
 
-要求：Node.js 18+、`iproxy`。本项目无第三方 npm 运行时依赖：
+要求：
 
-```bash
-npm run build
-npm test
-```
+- macOS；
+- Node.js 18+；
+- Xcode command line tools；
+- `iproxy`；
+- 已连接并信任的物理 iOS 设备。
 
-Codex MCP 配置示例：
+Codex 配置示例：
 
 ```toml
 [mcp_servers.ui_dbugbridge_mcp]
-command = "/absolute/path/to/node"
+command = "/opt/homebrew/bin/node"
 args = ["/absolute/path/UI-dbugbridge-mcp/src/server.js"]
 startup_timeout_sec = 30.0
 
@@ -79,93 +183,159 @@ LOOKDEBUG_DEVICE_UDID = "<physical-device-udid>"
 IPROXY_PATH = "iproxy"
 BRIDGE_LOCAL_PORT = "37777"
 BRIDGE_REMOTE_PORT = "37777"
+DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 ```
 
-截图不是 UI 树或日志依赖；如需截图可额外配置：
+配置项：
 
-```toml
-LOOKDEBUG_SCREENSHOT_COMMAND = "<command using {output}>"
+| 配置项 | 必须 | 说明 |
+| --- | --- | --- |
+| `BRIDGE_BASE_URL` | 否 | 默认 `http://127.0.0.1:37777` |
+| `LOOKDEBUG_DEVICE_UDID` | 是 | 指定优先使用的物理设备 UDID |
+| `IPROXY_PATH` | 否 | 默认 `iproxy` |
+| `BRIDGE_LOCAL_PORT` | 否 | 默认 `37777` |
+| `BRIDGE_REMOTE_PORT` | 否 | 默认 `37777` |
+| `DEV_FLOW_SESSION_ID` | 否 | DevFlow 上下文标识，只用于运行上下文回传 |
+| `LOOKDEBUG_SCREENSHOT_COMMAND` | 否 | 外部截图命令；使用 `{output}` 作为输出文件占位符 |
+
+截图不是 UI 树或日志的依赖能力。未配置 `LOOKDEBUG_SCREENSHOT_COMMAND` 时，`get_screenshot` 返回 `screenshot_command_not_configured`。
+
+## 标准真机调试流程
+
+```text
+1. session_show_defaults
+2. build_run_device
+3. 启动并确认 App 内 LookDebugBridge
+4. MCP tools/call: ping 或任意业务工具（自动执行预检）
+5. get_debug_page / inspect_ui
+6. tap_element / set_switch / set_text / type_text / run_flow
+7. read_app_logs 或 wait_app_logs 验证业务结果
+8. get_runtime_node / audit_runtime 做运行态校验
 ```
 
-MCP 会强制探测已连接、开发服务可用的物理设备；没有物理设备时返回 `physical_device_required`，不会静默切到模拟器。
+`build_run_device`、`session_show_defaults` 属于 XcodeBuildMCP，不是本仓库提供的 MCP 工具。本仓库不主动切换 Xcode scheme，也不模拟 `Command+R`。
 
-## 推荐调试流程
+## MCP 工具契约
 
-1. 调用 XcodeBuildMCP `session_show_defaults` 检查 workspace、scheme 和设备默认值。
-2. 调用 `build_run_device`，并传入当前 `DEV_FLOW_SESSION_ID`。
-3. MCP 调用 `ensure_ports`，建立或复用 `iproxy` 转发。
-4. 调用 `ping` 检查 App 内 DebugBridge。
-5. 使用 `get_debug_page`、`tap_element`、`set_text`、`run_flow` 操作 UI。
-6. 使用 `inspect_ui` 读取 UIWindow/UIView 树，或使用 `get_runtime_node` 验证指定 accessibility anchor。
-7. 使用 `read_app_logs` 检索当前运行的完整内存日志池；需要等待时使用 `wait_app_logs`。
+所有业务工具都通过 stdio 的 MCP `tools/list` 和 `tools/call` 暴露。工具结果统一包含：
 
-## MCP 工具
+```json
+{
+  "source": "debug_bridge",
+  "success": true,
+  "payload": {},
+  "error": null
+}
+```
 
-| 工具 | 用途 |
+### 环境与连接
+
+| 工具 | 参数 | 说明 |
+| --- | --- | --- |
+| `ping` | 无 | 物理设备预检并检查 App Bridge |
+| `ensure_ports` | 无 | 创建或复用 `iproxy` 转发 |
+
+### UI 页面和节点
+
+| 工具 | 主要参数 | 说明 |
+| --- | --- | --- |
+| `get_debug_page` | `expectedPageID?`, `saveArtifact?`, `timeoutMs?`, `intervalMs?` | 读取当前语义页面、页面标题和注册元素 |
+| `inspect_ui` | `depth?`, `includeHidden?`, `maxNodes?` | 读取当前 UIWindow/UIView 节点树 |
+| `get_runtime_node` | `anchor` | 按 `UIView.accessibilityIdentifier` 查找运行态节点；要求结果唯一 |
+| `get_page` | 同 `get_debug_page` | 兼容别名，已弃用 |
+| `get_ui_hierarchy` | 无 | `inspect_ui` 兼容别名，已弃用 |
+
+`inspect_ui` 示例：
+
+```json
+{
+  "name": "inspect_ui",
+  "arguments": {
+    "depth": 8,
+    "includeHidden": false,
+    "maxNodes": 2000
+  }
+}
+```
+
+### UI 操作
+
+| 工具 | 必填参数 | 说明 |
+| --- | --- | --- |
+| `tap_element` | `id` | 点击注册元素 |
+| `set_switch` | `id`, `isOn` | 设置开关状态 |
+| `set_text` | `id`, `text` | 替换输入控件文本 |
+| `type_text` | `id`, `text` | 追加输入控件文本 |
+| `run_flow` | `steps` | 按顺序执行多步 UI 流程 |
+
+操作工具使用 DebugBridge 注册的稳定 `id`，不使用坐标。单步可附加 `waitForPageID`、`waitForElement`、`timeoutMs`、`intervalMs` 等等待条件。
+
+`run_flow.steps` 支持：
+
+```text
+tap
+tap_if_present
+set_switch
+set_text
+type_text
+wait_for_page
+wait_for_element
+sleep
+```
+
+流程示例：
+
+```json
+{
+  "name": "run_flow",
+  "arguments": {
+    "steps": [
+      {"action": "set_text", "id": "login.email", "text": "user@example.com"},
+      {"action": "tap", "id": "login.submit", "waitForPageID": "home"},
+      {"action": "wait_for_element", "id": "home.content"}
+    ]
+  }
+}
+```
+
+### 日志、截图和运行态审查
+
+| 工具 | 必填参数 | 说明 |
+| --- | --- | --- |
+| `read_app_logs` | 无 | 查询当前 App 进程日志池 |
+| `wait_app_logs` | 无 | 等待当前请求开始后的新匹配日志 |
+| `get_screenshot` | 无 | 调用配置的外部截图命令 |
+| `audit_runtime` | `figmaRawPath` | 将 Figma raw JSON 与当前 DebugBridge 页面做语义校对并生成报告 |
+
+`audit_runtime` 可选 `figmaNodeID`、`expectedPageID`、`labelAliases`、`artifactDir`、`outJsonPath`、`outMarkdownPath`、`timeoutMs`、`intervalMs`。
+
+页面、流程和审查工具的 artifact 默认写入 `.devflow-ui/runtime`；截图默认写入当前工作目录下的 `.tmp/lookdebug-mcp`。日志不写入这些目录。
+
+## 常见错误
+
+| 错误 | 处理 |
 | --- | --- |
-| `ping` | 检查物理设备转发与 App 内 DebugBridge |
-| `ensure_ports` | 启动或复用 `iproxy` 的 `37777:37777` 转发 |
-| `get_debug_page` / `get_page` | 读取页面 ID、标题和注册元素 |
-| `inspect_ui` / `get_ui_hierarchy` | 读取当前 UIWindow/UIView 树 |
-| `get_runtime_node` | 按 accessibility identifier 查找运行态 UIView |
-| `tap_element` | 按稳定 ID 点击 |
-| `set_switch` | 设置开关 |
-| `set_text` / `type_text` | 替换或追加文本 |
-| `run_flow` | 执行多步 UI 流程 |
-| `read_app_logs` | 从当前运行的完整内存池检索日志 |
-| `wait_app_logs` | 等待新的匹配日志，不需要 cursor |
-| `audit_runtime` | 将 Figma raw 数据与 DebugBridge 页面做语义校对 |
-| `get_screenshot` | 执行可选的外部截图命令 |
+| `physical_device_required` | 连接物理设备，开启开发者模式并确认 Developer Disk Image 服务可用 |
+| `physical_device_detection_failed:*` | 检查 `xcrun devicectl list devices --json-output -` 和 Xcode command line tools |
+| `missing_LOOKDEBUG_DEVICE_UDID` | 设置 `LOOKDEBUG_DEVICE_UDID` |
+| `iproxy_not_reachable` | 检查 `iproxy` 路径、设备 UDID 和端口占用 |
+| `debug_bridge_ping_failed` | 确认 App 已启动 DebugBridge 且 `BRIDGE_BASE_URL` 正确 |
+| `page_unavailable` | 当前页面没有可用的页面描述或 App 仍在切换页面 |
+| `element_not_found` | 重新调用 `get_debug_page`，使用当前页面中的稳定元素 ID |
+| `unsupported_element_type` | 当前元素不支持请求的操作 |
+| `read_app_logs` 返回 `empty` | 确认日志入口确实调用了 `LookDebugBridge.log`，并放宽 query、level、category 条件 |
 
-日志查询示例：
-
-```json
-{"name":"read_app_logs","arguments":{"query":"upload","category":"oss","limit":50}}
-```
-
-```json
-{"name":"wait_app_logs","arguments":{"query":"completed","level":"info","waitMs":30000}}
-```
-
-返回中的 `sessionID` 是当前调试会话标识，`status` 为 `matched`、`empty` 或 `timeout`。返回内容没有 cursor、offset 或本地日志路径。
-
-窗口树查询示例：
-
-```json
-{"name":"inspect_ui","arguments":{"depth":8,"includeHidden":false,"maxNodes":2000}}
-```
-
-## 故障排查
-
-### `physical_device_required`
-
-确认设备已配对、开发者模式已开启、Developer Disk Image 服务可用，并检查：
-
-```bash
-xcrun devicectl list devices
-```
-
-### `debug_bridge_ping_failed`
-
-- 确认 App 是 Debug 构建并启动了 `LookDebugBridge.shared.startIfNeeded()`；
-- 确认 `iproxy -u <udid> 37777:37777` 可用；
-- 确认 `BRIDGE_BASE_URL` 为 `http://127.0.0.1:37777`。
-
-### `read_app_logs` 返回 `empty`
-
-这是当前 App 运行实例的内存池查询。确认 App 已启动、日志入口确实调用了 `LookDebugBridge.log`，并检查 query、level、category 是否过窄。重启 App 后旧日志不会恢复，这是设计行为。
-
-## 本地验证
+## 本地开发和验证
 
 ```bash
 npm run build
 npm test
 ```
 
-真机运行由 XcodeBuildMCP 完成：
+运行 MCP Server：
 
-```text
-session_show_defaults → build_run_device → ensure_ports → ping
+```bash
+node src/server.js
 ```
 
-本 MCP Server 使用 stdio，支持 `initialize`、`tools/list` 和 `tools/call`。
+该进程使用 newline-delimited JSON 的 stdio MCP transport，支持 `initialize`、`notifications/initialized`、`tools/list` 和 `tools/call`。
