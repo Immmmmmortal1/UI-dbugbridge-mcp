@@ -39,14 +39,6 @@ target 'YourApp' do
 end
 ```
 
-本地开发时可以使用 Pod 仓库目录：
-
-```ruby
-pod 'LookDebugBridge',
-    :path => '../shuxiamcp/LookDebugBridgeService',
-    :configurations => ['Debug']
-```
-
 不要再添加 `LookinServer`。执行：
 
 ```bash
