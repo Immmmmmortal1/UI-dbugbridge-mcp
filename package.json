@@ -1,9 +1,9 @@
 {
   "name": "lookdebug-mcp",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
-  "description": "Thin MCP wrapper for the in-app DebugBridge and physical-device runtime.",
+  "description": "Thin MCP wrapper for the in-app DebugBridge and physical-device runtime. Defaults to the first usable wired iOS device.",
   "scripts": {
     "build": "node --check src/config.js && node --check src/environmentPreflight.js && node --check src/runtimeTarget.js && node --check src/httpBridgeClient.js && node --check src/screenshotClient.js && node --check src/portForwarder.js && node --check src/server.js",
     "start": "node src/server.js",
