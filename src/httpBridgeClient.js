@@ -21,9 +21,14 @@ async function decodeJSON(response) {
 }
 
 export class HTTPBridgeClient {
-  constructor({ baseURL, fetchImpl = fetch }) {
+  constructor({ baseURL, fetchImpl = fetch, timeoutMs = 3000 }) {
     this.baseURL = baseURL;
     this.fetchImpl = fetchImpl;
+    this.timeoutMs = timeoutMs;
+  }
+
+  setBaseURL(baseURL) {
+    this.baseURL = baseURL;
   }
 
   async getPage() {
@@ -68,20 +73,36 @@ export class HTTPBridgeClient {
     return this.#request("GET", "/ping");
   }
 
-  async #request(method, pathname, body) {
-    const response = await this.fetchImpl(joinURL(this.baseURL, pathname), {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+  async getIdentity() {
+    return this.#request("GET", "/debug/identity");
+  }
 
-    const payload = await decodeJSON(response);
-    return {
-      ok: response.ok,
-      status: response.status,
-      payload,
-    };
+  async #request(method, pathname, body) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    let response;
+    try {
+      response = await this.fetchImpl(joinURL(this.baseURL, pathname), {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+      const payload = await decodeJSON(response);
+      return {
+        ok: response.ok,
+        status: response.status,
+        payload,
+      };
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error(`bridge_request_timeout:${this.timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }

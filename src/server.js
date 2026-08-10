@@ -34,7 +34,26 @@ const tools = [
     description: "Require a connected physical device and ensure the DebugBridge port is forwarded.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        bundleID: {
+          type: "string",
+          description: "Optional target App bundle ID. When provided, another App on the same device is rejected.",
+        },
+        appID: {
+          type: "string",
+          description: "Alias for bundleID.",
+        },
+        sessionID: {
+          type: "string",
+          description: "Optional target DebugBridge session ID.",
+        },
+        remotePort: {
+          type: "integer",
+          minimum: 1,
+          maximum: 65535,
+          description: "Optional exact remote bridge port. Without it, ports 42671-42770 are scanned.",
+        },
+      },
       additionalProperties: false,
     },
   },
@@ -695,6 +714,15 @@ function bridgeError(result) {
   return result.payload?.error || `http_${result.status}`;
 }
 
+function requestedBridgeIdentity(args) {
+  const bundleID = String(args?.bundleID || args?.appID || "").trim();
+  const sessionID = String(args?.sessionID || "").trim();
+  return {
+    ...(bundleID ? { bundleID } : {}),
+    ...(sessionID ? { sessionID } : {}),
+  };
+}
+
 function pageSummary(page) {
   if (!page) {
     return null;
@@ -1014,11 +1042,22 @@ async function dispatchTool(name, args) {
   }
   applyRuntimeTarget(config, targetResult.payload);
 
+  const requestedIdentity = requestedBridgeIdentity(args);
+  if (Object.keys(requestedIdentity).length > 0) {
+    config.expectedBridgeIdentity = requestedIdentity;
+  }
+  const expectedBridgeIdentity = config.expectedBridgeIdentity ?? null;
+  const remotePortCandidates = Number.isInteger(args?.remotePort)
+    ? [args.remotePort]
+    : undefined;
+
   const preflight = await runEnvironmentPreflight({
     config,
     portForwarder,
     bridgeClient,
     runtimeTarget: targetResult.payload,
+    expectedIdentity: expectedBridgeIdentity,
+    remotePortCandidates,
   });
 
   if (name === "ping" || preflight?.success === false) {
@@ -1027,7 +1066,7 @@ async function dispatchTool(name, args) {
 
   switch (name) {
     case "ensure_ports":
-      return makeToolResult("iproxy", await portForwarder.ensureAll());
+      return makeToolResult("lookdebug_environment_preflight", preflight);
     case "inspect_ui":
       {
         const result = await bridgeClient.getWindowTree(args);
@@ -1408,6 +1447,12 @@ async function handleMessage(message) {
             name: "lookdebug-mcp",
             version: "0.1.0",
           },
+          instructions: [
+            "LookDebugBridge / lookdebug-mcp is physical-device only; do not fall back to simulator.",
+            "When selecting a physical device for debugging, default to the first usable wired device (transportType=wired).",
+            "Do not ask which device to use when a wired device is available, unless LOOKDEBUG_DEVICE_UDID is explicitly set.",
+            "App launch/install uses XcodeBuildMCP build_run_device; this server owns DebugBridge UI/actions/logs after the app is running.",
+          ].join(" "),
         });
         return;
       case "notifications/initialized":

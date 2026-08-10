@@ -24,32 +24,123 @@ function normalizeToolResult(name, result, fallbackError) {
   };
 }
 
+function identityMatches(identity, expectedIdentity) {
+  if (!expectedIdentity || (!expectedIdentity.bundleID && !expectedIdentity.sessionID)) {
+    return true;
+  }
+  if (!identity) {
+    return false;
+  }
+  if (expectedIdentity.bundleID && identity.bundleID !== expectedIdentity.bundleID) {
+    return false;
+  }
+  if (expectedIdentity.sessionID && identity.sessionID !== expectedIdentity.sessionID) {
+    return false;
+  }
+  return true;
+}
+
+function candidatePorts(config, remotePortCandidates) {
+  if (Array.isArray(remotePortCandidates) && remotePortCandidates.length > 0) {
+    return remotePortCandidates;
+  }
+  if (config?.bridgeRemotePortExplicit) {
+    return [config.portForwards[0].remotePort];
+  }
+  const configuredPort = config?.portForwards?.[0]?.remotePort;
+  const start = config?.bridgeRemotePortStart ?? configuredPort ?? 42671;
+  const end = config?.bridgeRemotePortEnd ?? start;
+  return Array.from({ length: Math.max(1, end - start + 1) }, (_, index) => start + index);
+}
+
 export async function runEnvironmentPreflight({
   config,
   portForwarder,
   bridgeClient,
   runtimeTarget,
+  expectedIdentity = null,
+  remotePortCandidates,
 }) {
   const startedAt = Date.now();
-  const portForward = await captureResult(() => portForwarder.ensureAll());
-  const portForwardCheck = normalizeToolResult("port_forward", portForward, "port_forward_failed");
-  const bridgePing = await captureResult(() => bridgeClient.ping());
-  const bridgeCheck = normalizeToolResult("debug_bridge_ping", bridgePing, "debug_bridge_ping_failed");
-  const checks = [portForwardCheck, bridgeCheck];
-  const failed = checks.filter((check) => !check.success);
+  if (!Array.isArray(config.portForwards) || !config.portForwards[0]) {
+    config.portForwards = [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }];
+  }
+  const candidates = candidatePorts(config, remotePortCandidates);
+  let lastFailure = null;
+
+  for (const [index, remotePort] of candidates.entries()) {
+    if (index > 0) {
+      portForwarder.stopAll?.();
+    }
+    config.portForwards[0].remotePort = remotePort;
+
+    const portForward = await captureResult(() => portForwarder.ensureAll());
+    const portForwardCheck = normalizeToolResult("port_forward", portForward, "port_forward_failed");
+    if (portForwardCheck.success && typeof bridgeClient.setBaseURL === "function") {
+      bridgeClient.setBaseURL(config.bridgeBaseURL);
+    }
+
+    const bridgePing = portForwardCheck.success
+      ? await captureResult(() => bridgeClient.ping())
+      : { success: false, error: "port_forward_failed" };
+    const bridgeCheck = normalizeToolResult("debug_bridge_ping", bridgePing, "debug_bridge_ping_failed");
+    if (!bridgeCheck.success) {
+      lastFailure = { portForwardCheck, bridgeCheck };
+      continue;
+    }
+
+    let identity = null;
+    if (typeof bridgeClient.getIdentity === "function") {
+      const identityResult = await captureResult(() => bridgeClient.getIdentity());
+      if (identityResult?.ok && identityResult.payload) {
+        identity = identityResult.payload;
+      }
+    }
+
+    if (!identityMatches(identity, expectedIdentity)) {
+      lastFailure = {
+        portForwardCheck,
+        bridgeCheck,
+        identity,
+        error: "bridge_target_mismatch",
+      };
+      portForwarder.stopAll?.();
+      continue;
+    }
+
+    return {
+      success: true,
+      payload: {
+        mode: "device",
+        bridgeBaseURL: bridgeClient.baseURL,
+        sessionID: config?.sessionID ?? null,
+        runtimeTarget,
+        remotePort,
+        identity,
+        checks: [portForwardCheck, bridgeCheck],
+        elapsedMs: Date.now() - startedAt,
+      },
+      error: null,
+    };
+  }
 
   return {
-    success: failed.length === 0,
+    success: false,
     payload: {
       mode: "device",
       bridgeBaseURL: bridgeClient.baseURL,
       sessionID: config?.sessionID ?? null,
       runtimeTarget,
-      checks,
+      remotePortCandidates: candidates,
+      lastFailure,
+      checks: [
+        lastFailure?.portForwardCheck ?? { name: "port_forward", success: false, error: "port_forward_failed" },
+        lastFailure?.bridgeCheck ?? { name: "debug_bridge_ping", success: false, error: "debug_bridge_ping_failed" },
+      ],
       elapsedMs: Date.now() - startedAt,
     },
-    error: failed.length === 0
-      ? null
-      : `lookdebug_environment_preflight_failed:${failed.map((check) => check.name).join(",")}`,
+    error: lastFailure?.error === "bridge_target_mismatch"
+      ? "lookdebug_environment_preflight_failed:bridge_target_mismatch"
+      : "lookdebug_environment_preflight_failed:debug_bridge_ping",
   };
 }

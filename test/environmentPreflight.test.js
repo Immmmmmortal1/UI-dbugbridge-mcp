@@ -13,6 +13,11 @@ function makeDependencies(overrides = {}) {
     bridgeClient: {
       baseURL: "http://127.0.0.1:37777",
       ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
+      getIdentity: async () => ({
+        ok: true,
+        status: 200,
+        payload: { ok: true, bundleID: "com.test", sessionID: "test-session", port: 42671 },
+      }),
     },
     ...overrides,
   };
@@ -30,6 +35,25 @@ test("preflight passes with physical-device forwarding and DebugBridge ping", as
   assert.equal(result.payload.sessionID, "test-session");
   assert.equal(checkByName(result, "port_forward").success, true);
   assert.equal(checkByName(result, "debug_bridge_ping").success, true);
+});
+
+test("preflight syncs the bridge client to the allocated local port", async () => {
+  const dependencies = makeDependencies();
+  dependencies.portForwarder.ensureAll = async () => {
+    dependencies.config.bridgeBaseURL = "http://127.0.0.1:41020";
+    return { success: true, payload: { forwards: [{ localPort: 41020 }] }, error: null };
+  };
+  dependencies.bridgeClient.setBaseURL = (baseURL) => {
+    dependencies.bridgeClient.baseURL = baseURL;
+  };
+  dependencies.bridgeClient.ping = async () => {
+    assert.equal(dependencies.bridgeClient.baseURL, "http://127.0.0.1:41020");
+    return { ok: true, status: 200, payload: { success: true } };
+  };
+
+  const result = await runEnvironmentPreflight(dependencies);
+
+  assert.equal(result.success, true);
 });
 
 test("preflight fails when the in-app DebugBridge is unreachable", async () => {
@@ -54,4 +78,32 @@ test("preflight reports forwarding failure instead of hiding it", async () => {
 
   assert.equal(result.success, false);
   assert.equal(checkByName(result, "port_forward").error, "iproxy_not_reachable");
+});
+
+test("preflight scans the next remote port when the first bridge belongs to another App", async () => {
+  const attempts = [];
+  const dependencies = makeDependencies();
+  dependencies.portForwarder.ensureAll = async () => {
+    attempts.push(dependencies.config.portForwards[0].remotePort);
+    return { success: true, payload: { forwards: [] }, error: null };
+  };
+  dependencies.portForwarder.stopAll = () => {};
+  dependencies.bridgeClient.getIdentity = async () => ({
+    ok: true,
+    status: 200,
+    payload: attempts.at(-1) === 42671
+      ? { ok: true, bundleID: "com.other", sessionID: "other", port: 42671 }
+      : { ok: true, bundleID: "com.target", sessionID: "target", port: 42672 },
+  });
+
+  const result = await runEnvironmentPreflight({
+    ...dependencies,
+    expectedIdentity: { bundleID: "com.target", sessionID: "target" },
+    remotePortCandidates: [42671, 42672],
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(attempts, [42671, 42672]);
+  assert.equal(result.payload.remotePort, 42672);
+  assert.equal(result.payload.identity.bundleID, "com.target");
 });

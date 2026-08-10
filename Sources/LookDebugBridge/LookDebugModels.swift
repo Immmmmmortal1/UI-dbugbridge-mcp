@@ -26,6 +26,13 @@ struct LookDebugPingResponse: Codable, Equatable {
     let ok: Bool
 }
 
+struct LookDebugIdentityResponse: Codable, Equatable {
+    let ok: Bool
+    let bundleID: String
+    let sessionID: String
+    let port: UInt16
+}
+
 struct LookDebugTapRequest: Codable, Equatable {
     let id: String
 }

@@ -13,6 +13,18 @@ struct LookDebugBridgeRouter {
         try jsonResponse(statusCode: 200, payload: LookDebugPingResponse(ok: true))
     }
 
+    func identity() throws -> LookDebugHTTPResponse {
+        try jsonResponse(
+            statusCode: 200,
+            payload: LookDebugIdentityResponse(
+                ok: true,
+                bundleID: LookDebugBridge.bundleID,
+                sessionID: LookDebugBridge.sessionID,
+                port: LookDebugBridge.shared.activePort
+            )
+        )
+    }
+
     func page(currentViewController: UIViewController?) throws -> LookDebugHTTPResponse {
         do {
             let payload = try pageProvider.payload(for: currentViewController)

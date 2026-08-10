@@ -5,13 +5,15 @@ import UIKit
 typealias LookDebugCurrentViewControllerProvider = @MainActor () -> UIViewController?
 
 final class LookDebugBridgeServer {
-    private let port: UInt16
+    private var port: UInt16
     private let router: LookDebugBridgeRouter
     private let queue = DispatchQueue(label: "com.shuxia.lookdebug.bridge")
     private var listener: NWListener?
 
+    var activePort: UInt16 { port }
+
     @MainActor
-    init(port: UInt16 = 37777, router: LookDebugBridgeRouter? = nil) {
+    init(port: UInt16, router: LookDebugBridgeRouter? = nil) {
         self.port = port
         self.router = router ?? LookDebugBridgeRouter()
     }
@@ -19,19 +21,48 @@ final class LookDebugBridgeServer {
     func start(currentViewControllerProvider: @escaping LookDebugCurrentViewControllerProvider) throws {
         guard listener == nil else { return }
 
+        startListener(currentViewControllerProvider: currentViewControllerProvider, port: port)
+    }
+
+    private func startListener(
+        currentViewControllerProvider: @escaping LookDebugCurrentViewControllerProvider,
+        port: UInt16
+    ) {
         let parameters = NWParameters.tcp
-        let listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port)!)
+        guard let endpointPort = NWEndpoint.Port(rawValue: port),
+              let listener = try? NWListener(using: parameters, on: endpointPort) else {
+            retryNextPort(currentViewControllerProvider: currentViewControllerProvider, after: port)
+            return
+        }
         listener.newConnectionHandler = { [weak self] connection in
             self?.handle(connection: connection, currentViewControllerProvider: currentViewControllerProvider)
         }
         listener.stateUpdateHandler = { state in
-            if case let .failed(error) = state {
-                LookDebugBridge.log("server failed: \(error)", level: "error", category: "bridge")
+            switch state {
+            case .ready:
+                self.port = port
+                LookDebugBridge.log("listening on \(port)", category: "bridge")
+            case let .failed(error):
+                self.listener = nil
+                LookDebugBridge.log("server failed on \(port): \(error)", level: "error", category: "bridge")
+                self.retryNextPort(currentViewControllerProvider: currentViewControllerProvider, after: port)
+            default:
+                break
             }
         }
         listener.start(queue: queue)
         self.listener = listener
-        LookDebugBridge.log("listening on \(port)", category: "bridge")
+    }
+
+    private func retryNextPort(
+        currentViewControllerProvider: @escaping LookDebugCurrentViewControllerProvider,
+        after port: UInt16
+    ) {
+        guard let nextPort = LookDebugPort.next(after: port) else {
+            LookDebugBridge.log("no available bridge port in \(LookDebugPort.firstDynamicPort)-\(LookDebugPort.lastDynamicPort)", level: "error", category: "bridge")
+            return
+        }
+        startListener(currentViewControllerProvider: currentViewControllerProvider, port: nextPort)
     }
 
     private func handle(
@@ -125,6 +156,8 @@ final class LookDebugBridgeServer {
             switch (request.method, request.path) {
             case ("GET", "/ping"):
                 return try router.ping()
+            case ("GET", "/debug/identity"):
+                return try router.identity()
             case ("GET", "/debug/logs"):
                 return try await router.logs(
                     query: request.queryValue("query"),

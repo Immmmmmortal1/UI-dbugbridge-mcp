@@ -15,9 +15,10 @@
 
 - 只允许物理 iOS 设备。
 - App 必须由 `build_run_device` 编译、安装并启动。
+- 真机调试默认选中**有线连接（`transportType=wired`）的第一台可用设备**；未显式配置 `LOOKDEBUG_DEVICE_UDID` 时不要改选无线设备或其他目标。仅当没有有线可用设备、或调用方明确指定 UDID 时，才使用其他物理设备。
 - 不激活 Xcode scheme，不发送 `Command+R`。
 - 不读取 Xcode Console，不调用 Lookin CLI。
-- App 端 Bridge 默认监听 `37777`；Mac 端通过 `iproxy` 转发到 `127.0.0.1:37777`。
+- App 端 Bridge 默认监听 `42671`；Mac 端通过 `iproxy` 转发到本机自动分配的端口。
 - MCP 每次调用业务工具前都会执行物理设备和 DebugBridge 预检；`ensure_ports`、`ping` 仍可用于显式诊断。
 
 没有连接、开发者模式未开启或 Developer Disk Image 服务不可用的物理设备时，返回 `physical_device_required`，不会静默切换到模拟器。
@@ -34,7 +35,7 @@ target 'YourApp' do
 
   pod 'LookDebugBridge',
       :git => 'git@github.com:Immmmmmortal1/LookDebugBridgeService.git',
-      :tag => '0.1.5',
+      :tag => '0.1.7',
       :configurations => ['Debug']
 end
 ```
@@ -170,10 +171,12 @@ args = ["/absolute/path/UI-dbugbridge-mcp/src/server.js"]
 startup_timeout_sec = 30.0
 
 [mcp_servers.ui_dbugbridge_mcp.env]
-BRIDGE_BASE_URL = "http://127.0.0.1:37777"
+# Optional: omit with BRIDGE_LOCAL_PORT for automatic per-process local ports.
+# BRIDGE_BASE_URL = "http://127.0.0.1:37777"
 LOOKDEBUG_DEVICE_UDID = "<physical-device-udid>"
 IPROXY_PATH = "iproxy"
-BRIDGE_LOCAL_PORT = "37777"
+# Optional: omit to allocate a unique local port per MCP process.
+# BRIDGE_LOCAL_PORT = "37777"
 BRIDGE_REMOTE_PORT = "37777"
 DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 ```
@@ -182,11 +185,11 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 
 | 配置项 | 必须 | 说明 |
 | --- | --- | --- |
-| `BRIDGE_BASE_URL` | 否 | 默认 `http://127.0.0.1:37777` |
+| `BRIDGE_BASE_URL` | 否 | 默认自动生成实际本机转发地址；设置后视为固定本机/远端地址 |
 | `LOOKDEBUG_DEVICE_UDID` | 是 | 指定优先使用的物理设备 UDID |
 | `IPROXY_PATH` | 否 | 默认 `iproxy` |
-| `BRIDGE_LOCAL_PORT` | 否 | 默认 `37777` |
-| `BRIDGE_REMOTE_PORT` | 否 | 默认 `37777` |
+| `BRIDGE_LOCAL_PORT` | 否 | 默认自动分配本机端口；设置后固定使用指定端口，若被其他转发占用则失败 |
+| `BRIDGE_REMOTE_PORT` | 否 | 默认扫描 `42671-42770`；设置后固定使用指定端口 |
 | `DEV_FLOW_SESSION_ID` | 否 | DevFlow 上下文标识，只用于运行上下文回传 |
 | `LOOKDEBUG_SCREENSHOT_COMMAND` | 否 | 外部截图命令；使用 `{output}` 作为输出文件占位符 |
 
@@ -196,7 +199,7 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 
 ```text
 1. session_show_defaults
-2. build_run_device
+2. 未指定设备时，默认选中有线连接的第一台可用物理设备，再 build_run_device
 3. 启动并确认 App 内 LookDebugBridge
 4. MCP tools/call: ping 或任意业务工具（自动执行预检）
 5. get_debug_page / inspect_ui
@@ -205,7 +208,7 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 8. get_runtime_node / audit_runtime 做运行态校验
 ```
 
-`build_run_device`、`session_show_defaults` 属于 XcodeBuildMCP，不是本仓库提供的 MCP 工具。本仓库不主动切换 Xcode scheme，也不模拟 `Command+R`。
+`build_run_device`、`session_show_defaults` 属于 XcodeBuildMCP，不是本仓库提供的 MCP 工具。本仓库不主动切换 Xcode scheme，也不模拟 `Command+R`。设备选择遵循上方「有线第一台」规则；`LOOKDEBUG_DEVICE_UDID` 仅用于显式覆盖。
 
 ## MCP 工具契约
 

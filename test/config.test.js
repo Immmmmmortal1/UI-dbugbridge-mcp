@@ -1,0 +1,39 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { loadConfig } from "../src/config.js";
+
+test("config defaults to automatic local port allocation", () => {
+  const config = loadConfig({});
+
+  assert.equal(config.portForwards[0].localPort, 0);
+  assert.equal(config.portForwards[0].autoAllocate, true);
+  assert.equal(config.bridgeBaseURLPortAuto, true);
+  assert.ok(config.portForwards[0].remotePort >= 42000);
+  assert.ok(config.portForwards[0].remotePort < 44000);
+  assert.notEqual(config.portForwards[0].remotePort, 37777);
+});
+
+test("apps start at the first dynamic bridge port and can opt into an assigned port", () => {
+  const first = loadConfig({ LOOKDEBUG_DEVICE_UDID: "device-1" });
+  const second = loadConfig({ LOOKDEBUG_DEVICE_UDID: "device-2", DEV_FLOW_SESSION_ID: "other-task" });
+
+  assert.equal(first.portForwards[0].remotePort, 42671);
+  assert.equal(second.portForwards[0].remotePort, 42671);
+  assert.equal(loadConfig({ BRIDGE_REMOTE_PORT: "42672" }).portForwards[0].remotePort, 42672);
+});
+
+test("explicit local port remains opt-in and is not auto-allocated", () => {
+  const config = loadConfig({ BRIDGE_BASE_URL: "http://127.0.0.1:37777", BRIDGE_LOCAL_PORT: "40000" });
+
+  assert.equal(config.portForwards[0].localPort, 40000);
+  assert.equal(config.portForwards[0].autoAllocate, false);
+  assert.equal(config.bridgeBaseURL, "http://127.0.0.1:40000");
+});
+
+test("an explicit loopback base URL preserves its fixed local port", () => {
+  const config = loadConfig({ BRIDGE_BASE_URL: "http://127.0.0.1:39000" });
+
+  assert.equal(config.portForwards[0].localPort, 39000);
+  assert.equal(config.portForwards[0].autoAllocate, false);
+});

@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name = "LookDebugBridge"
-  s.version = "0.1.5"
+  s.version = "0.1.7"
   s.summary = "A debug-only HTTP bridge for AI-driven iOS UI inspection, control, and logs."
   s.description = <<-DESC
     LookDebugBridge exposes stable debug element actions, UIWindow hierarchy inspection,

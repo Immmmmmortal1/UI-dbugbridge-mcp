@@ -2,7 +2,7 @@ import UIKit
 
 @MainActor
 public final class LookDebugBridge {
-    public static let shared = LookDebugBridge()
+    public static let shared = LookDebugBridge(port: LookDebugPort.resolve())
 
     public nonisolated static let sessionID =
         (ProcessInfo.processInfo.environment["DEV_FLOW_SESSION_ID"]?.isEmpty == false
@@ -11,10 +11,12 @@ public final class LookDebugBridge {
                 ? ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]!
                 : "local"))
 
+    public nonisolated static let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
+
     private let server: LookDebugBridgeServer
     private var hasStarted = false
 
-    public convenience init(port: UInt16 = 37777) {
+    public convenience init(port: UInt16) {
         self.init(server: LookDebugBridgeServer(port: port))
     }
 
@@ -50,6 +52,8 @@ public final class LookDebugBridge {
             Self.log("LookDebugBridge failed to start: \(error)", level: "error", category: "bridge")
         }
     }
+
+    var activePort: UInt16 { server.activePort }
 
     private func currentViewController() -> UIViewController? {
         let scenes = UIApplication.shared.connectedScenes

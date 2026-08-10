@@ -85,3 +85,23 @@ test("readLogs searches the current app pool without a cursor", async () => {
   );
   assert.doesNotMatch(calls[0].url, /cursor|offset/);
 });
+
+test("bridge requests time out instead of hanging when the port accepts but does not respond", async () => {
+  const client = new HTTPBridgeClient({
+    baseURL: "http://127.0.0.1:37777",
+    timeoutMs: 10,
+    fetchImpl: (_url, options) => Promise.resolve({
+      ok: true,
+      status: 200,
+      text: () => new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      }),
+    }),
+  });
+
+  await assert.rejects(() => client.ping(), /bridge_request_timeout:10ms/);
+});

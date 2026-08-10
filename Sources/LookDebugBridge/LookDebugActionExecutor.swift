@@ -67,6 +67,12 @@ struct LookDebugActionExecutor {
         }
 
         control.sendActions(for: .touchUpInside)
+        // Some app controls (e.g. LovOnOverlayRouteButton) bind business actions via
+        // accessibilityActivate/onActivate without a UIAction for touchUpInside.
+        // Fall back so DebugBridge taps still reach those handlers once.
+        if control is UIButton {
+            _ = control.accessibilityActivate()
+        }
     }
 
     func setSwitch(id: String, isOn: Bool) throws {
