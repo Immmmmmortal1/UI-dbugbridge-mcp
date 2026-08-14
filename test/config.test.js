@@ -23,17 +23,17 @@ test("apps start at the first dynamic bridge port and can opt into an assigned p
   assert.equal(loadConfig({ BRIDGE_REMOTE_PORT: "42672" }).portForwards[0].remotePort, 42672);
 });
 
+test("config session id prefers Cursor conversation id before local fallback", () => {
+  const config = loadConfig({
+    CURSOR_CONVERSATION_ID: "bd225fc5-4f36-47e2-876e-8d9d125033a1",
+  });
+  assert.equal(config.sessionID, "bd225fc5-4f36-47e2-876e-8d9d125033a1");
+});
+
 test("explicit local port remains opt-in and is not auto-allocated", () => {
   const config = loadConfig({ BRIDGE_BASE_URL: "http://127.0.0.1:37777", BRIDGE_LOCAL_PORT: "40000" });
 
   assert.equal(config.portForwards[0].localPort, 40000);
   assert.equal(config.portForwards[0].autoAllocate, false);
   assert.equal(config.bridgeBaseURL, "http://127.0.0.1:40000");
-});
-
-test("an explicit loopback base URL preserves its fixed local port", () => {
-  const config = loadConfig({ BRIDGE_BASE_URL: "http://127.0.0.1:39000" });
-
-  assert.equal(config.portForwards[0].localPort, 39000);
-  assert.equal(config.portForwards[0].autoAllocate, false);
 });

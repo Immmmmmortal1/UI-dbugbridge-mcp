@@ -107,3 +107,77 @@ test("preflight scans the next remote port when the first bridge belongs to anot
   assert.equal(result.payload.remotePort, 42672);
   assert.equal(result.payload.identity.bundleID, "com.target");
 });
+
+test("preflight ignores a localhost target when a physical device is present", async () => {
+  const dependencies = makeDependencies();
+  const calls = [];
+  dependencies.portForwarder.stopAll = () => {};
+  dependencies.bridgeClient.setBaseURL = (baseURL) => {
+    dependencies.bridgeClient.baseURL = baseURL;
+  };
+  dependencies.bridgeClient.ping = async () => {
+    calls.push(dependencies.bridgeClient.baseURL);
+    return { ok: true, status: 200, payload: { ok: true } };
+  };
+  dependencies.bridgeClient.getIdentity = async () => ({
+    ok: true,
+    status: 200,
+    payload: { ok: true, bundleID: "com.device", sessionID: "device", port: 42671 },
+  });
+
+  const result = await runEnvironmentPreflight({
+    ...dependencies,
+    targets: [
+      {
+        mode: "device",
+        deviceUDID: "device-1",
+        host: "fd00::1",
+        device: { name: "iPhone", deviceUDID: "device-1", transport: "wired", tunnelIPAddress: "fd00::1" },
+      },
+      {
+        mode: "unknown",
+        deviceUDID: "",
+        host: "127.0.0.1",
+        device: null,
+      },
+    ],
+    expectedIdentity: { bundleID: "com.device" },
+    remotePortCandidates: [42671],
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.payload.mode, "device");
+  assert.equal(result.payload.identity.bundleID, "com.device");
+  assert.equal(result.payload.discovered.length, 1);
+  assert.equal(dependencies.bridgeClient.baseURL, "http://[fd00::1]:42671");
+  assert.deepEqual(calls, ["http://[fd00::1]:42671"]);
+});
+
+test("multi-target selection prefers wired device over other live bridges", async () => {
+  const { selectLiveBridge } = await import("../src/environmentPreflight.js");
+  const selected = selectLiveBridge({
+    liveBridges: [
+      {
+        runtimeTarget: {
+          mode: "device",
+          deviceUDID: "device-wireless",
+          device: { transport: "localNetwork", name: "iPhone" },
+        },
+        bridgeBaseURL: "http://[fd00::2]:42671",
+        identity: { bundleID: "com.wireless" },
+      },
+      {
+        runtimeTarget: {
+          mode: "device",
+          deviceUDID: "device-1",
+          device: { transport: "wired", name: "iPhone" },
+        },
+        bridgeBaseURL: "http://[fd00::1]:42671",
+        identity: { bundleID: "com.device" },
+      },
+    ],
+  });
+
+  assert.equal(selected.runtimeTarget.mode, "device");
+  assert.equal(selected.identity.bundleID, "com.device");
+});

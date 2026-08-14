@@ -13,15 +13,13 @@
 
 ## 当前运行约束
 
-- 只允许物理 iOS 设备。
-- App 必须由 `build_run_device` 编译、安装并启动。
-- 真机调试默认选中**有线连接（`transportType=wired`）的第一台可用设备**；未显式配置 `LOOKDEBUG_DEVICE_UDID` 时不要改选无线设备或其他目标。仅当没有有线可用设备、或调用方明确指定 UDID 时，才使用其他物理设备。
-- 不激活 Xcode scheme，不发送 `Command+R`。
+- 只发现物理设备上的 DebugBridge，不扫描 iOS Simulator，也不回退到 localhost。
+- `ensure_ports` / `ping` 会扫描真机目标的 `42671-42770`，并在结果里返回 `discovered` 列表。
+- 通过 `bundleID` / `sessionID` / `deviceUDID` / `mode=device` 选择当前激活目标。
+- 未指定选择器时，优先有线真机上的活桥，其次任意真机。
+- App 编译安装由 XcodeBuildMCP 负责；本仓库不激活 Xcode scheme，不发送 `Command+R`。
 - 不读取 Xcode Console，不调用 Lookin CLI。
-- App 端 Bridge 默认监听 `42671`；Mac 端通过 `iproxy` 转发到本机自动分配的端口。
-- MCP 每次调用业务工具前都会执行物理设备和 DebugBridge 预检；`ensure_ports`、`ping` 仍可用于显式诊断。
-
-没有连接、开发者模式未开启或 Developer Disk Image 服务不可用的物理设备时，返回 `physical_device_required`，不会静默切换到模拟器。
+- 真机优先走 CoreDevice tunnel；旧设备回退 `iproxy`。
 
 ## App 侧接入
 
@@ -190,7 +188,7 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 | `IPROXY_PATH` | 否 | 默认 `iproxy` |
 | `BRIDGE_LOCAL_PORT` | 否 | 默认自动分配本机端口；设置后固定使用指定端口，若被其他转发占用则失败 |
 | `BRIDGE_REMOTE_PORT` | 否 | 默认扫描 `42671-42770`；设置后固定使用指定端口 |
-| `DEV_FLOW_SESSION_ID` | 否 | DevFlow 上下文标识，只用于运行上下文回传 |
+| `DEV_FLOW_SESSION_ID` | 否 | DevFlow 上下文标识，只用于运行上下文回传；未设置时回退 `CODEX_THREAD_ID`、`CURSOR_CONVERSATION_ID` |
 | `LOOKDEBUG_SCREENSHOT_COMMAND` | 否 | 外部截图命令；使用 `{output}` 作为输出文件占位符 |
 
 截图不是 UI 树或日志的依赖能力。未配置 `LOOKDEBUG_SCREENSHOT_COMMAND` 时，`get_screenshot` 返回 `screenshot_command_not_configured`。
@@ -227,8 +225,8 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
-| `ping` | 无 | 物理设备预检并检查 App Bridge |
-| `ensure_ports` | 无 | 创建或复用 `iproxy` 转发 |
+| `ping` | `bundleID?`, `sessionID?`, `deviceUDID?`, `mode?`, `remotePort?` | 扫描全部目标上的活桥并激活一个 |
+| `ensure_ports` | 同上 | 同上；结果包含 `discovered` 多目标列表 |
 
 ### UI 页面和节点
 

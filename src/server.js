@@ -22,22 +22,13 @@ const DEFAULT_POST_ACTION_WAIT_MS = 350;
 const tools = [
   {
     name: "ping",
-    description: "Require a connected physical iOS device, then check the in-app DebugBridge.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "ensure_ports",
-    description: "Require a connected physical device and ensure the DebugBridge port is forwarded.",
+    description: "Discover live DebugBridge targets on connected physical devices, then activate one.",
     inputSchema: {
       type: "object",
       properties: {
         bundleID: {
           type: "string",
-          description: "Optional target App bundle ID. When provided, another App on the same device is rejected.",
+          description: "Optional target App bundle ID used to select among simultaneous bridges.",
         },
         appID: {
           type: "string",
@@ -46,6 +37,52 @@ const tools = [
         sessionID: {
           type: "string",
           description: "Optional target DebugBridge session ID.",
+        },
+        deviceUDID: {
+          type: "string",
+          description: "Optional physical device UDID used as a preference when multiple bridges match.",
+        },
+        mode: {
+          type: "string",
+          enum: ["auto", "device"],
+          description: "Optional runtime mode filter. auto and device both use physical devices only.",
+        },
+        remotePort: {
+          type: "integer",
+          minimum: 1,
+          maximum: 65535,
+          description: "Optional exact remote bridge port. Without it, ports 42671-42770 are scanned.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "ensure_ports",
+    description: "Scan DebugBridge ports on usable physical devices, keep simultaneous discoveries, and activate the matching target.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundleID: {
+          type: "string",
+          description: "Optional target App bundle ID. When provided, selects that App among simultaneous bridges.",
+        },
+        appID: {
+          type: "string",
+          description: "Alias for bundleID.",
+        },
+        sessionID: {
+          type: "string",
+          description: "Optional target DebugBridge session ID.",
+        },
+        deviceUDID: {
+          type: "string",
+          description: "Optional physical device UDID used as a preference when multiple bridges match.",
+        },
+        mode: {
+          type: "string",
+          enum: ["auto", "device"],
+          description: "Optional runtime mode filter. auto and device both use physical devices only.",
         },
         remotePort: {
           type: "integer",
@@ -723,6 +760,11 @@ function requestedBridgeIdentity(args) {
   };
 }
 
+function requestedRuntimeMode(args) {
+  const mode = String(args?.mode || "auto").trim();
+  return ["auto", "device"].includes(mode) ? mode : "auto";
+}
+
 function pageSummary(page) {
   if (!page) {
     return null;
@@ -1036,11 +1078,28 @@ async function runFlow(steps) {
 }
 
 async function dispatchTool(name, args) {
-  const targetResult = await runtimeTargetResolver.resolve(config);
-  if (!targetResult.success) {
-    return makeToolResult("runtime_target_resolver", targetResult);
+  const listed = await runtimeTargetResolver.listAll(config);
+  if (!listed.success || !Array.isArray(listed.payload?.targets) || listed.payload.targets.length === 0) {
+    return makeToolResult("runtime_target_resolver", {
+      success: false,
+      payload: listed.payload,
+      error: listed.error || "no_runtime_targets",
+    });
   }
-  applyRuntimeTarget(config, targetResult.payload);
+
+  const deviceTargets = listed.payload.targets.filter((target) => target.mode === "device");
+  if (deviceTargets.length === 0) {
+    return makeToolResult("runtime_target_resolver", {
+      success: false,
+      payload: listed.payload,
+      error: "no_runtime_targets",
+    });
+  }
+
+  const preferredMode = requestedRuntimeMode(args);
+  const preferredDeviceUDID = String(args?.deviceUDID || "").trim();
+  const defaultTarget = deviceTargets[0];
+  applyRuntimeTarget(config, defaultTarget);
 
   const requestedIdentity = requestedBridgeIdentity(args);
   if (Object.keys(requestedIdentity).length > 0) {
@@ -1055,9 +1114,12 @@ async function dispatchTool(name, args) {
     config,
     portForwarder,
     bridgeClient,
-    runtimeTarget: targetResult.payload,
+    targets: deviceTargets,
+    runtimeTarget: defaultTarget,
     expectedIdentity: expectedBridgeIdentity,
     remotePortCandidates,
+    preferredDeviceUDID,
+    preferredMode,
   });
 
   if (name === "ping" || preflight?.success === false) {
@@ -1448,10 +1510,12 @@ async function handleMessage(message) {
             version: "0.1.0",
           },
           instructions: [
-            "LookDebugBridge / lookdebug-mcp is physical-device only; do not fall back to simulator.",
-            "When selecting a physical device for debugging, default to the first usable wired device (transportType=wired).",
-            "Do not ask which device to use when a wired device is available, unless LOOKDEBUG_DEVICE_UDID is explicitly set.",
-            "App launch/install uses XcodeBuildMCP build_run_device; this server owns DebugBridge UI/actions/logs after the app is running.",
+            "LookDebugBridge / lookdebug-mcp discovers DebugBridge on connected physical devices.",
+            "ensure_ports/ping scan ports 42671-42770 on physical devices and return discovered bridges.",
+            "Select a target with bundleID, sessionID, deviceUDID, and/or mode=device.",
+            "When no selector is provided, prefer a live wired physical device bridge, otherwise any live device.",
+            "This server never scans iOS Simulator or localhost bridges.",
+            "App launch/install uses XcodeBuildMCP; this server owns DebugBridge UI/actions/logs after the app is running.",
           ].join(" "),
         });
         return;

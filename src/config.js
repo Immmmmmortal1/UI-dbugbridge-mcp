@@ -64,7 +64,12 @@ export function loadConfig(env = process.env) {
   const bridgeBaseURL = bridgeLocalPortExplicit && isLoopbackURL(bridgeBaseURLValue)
     ? withPort(bridgeBaseURLValue, bridgeLocalPort)
     : bridgeBaseURLValue;
-  const sessionID = (env.DEV_FLOW_SESSION_ID || env.CODEX_THREAD_ID || "local").trim() || "local";
+  const sessionID = (
+    env.DEV_FLOW_SESSION_ID
+    || env.CODEX_THREAD_ID
+    || env.CURSOR_CONVERSATION_ID
+    || "local"
+  ).trim() || "local";
   const bridgeRemotePortExplicit = Boolean(env.BRIDGE_REMOTE_PORT?.trim());
   const bridgeRemotePort = bridgeRemotePortExplicit
     ? readInteger(env.BRIDGE_REMOTE_PORT, BRIDGE_REMOTE_PORT_START)

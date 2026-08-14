@@ -10,5 +10,6 @@ test("LookDebugBridge starts only its in-app bridge and exposes session-scoped l
   assert.doesNotMatch(source, /LookinServer/);
   assert.doesNotMatch(source, /startLookinIfAvailable/);
   assert.match(source, /static let sessionID/);
+  assert.match(source, /CURSOR_CONVERSATION_ID/);
   assert.match(source, /LookDebugLogStore\.shared\.append/);
 });

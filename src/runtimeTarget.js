@@ -44,6 +44,7 @@ function summarizeDevice(device) {
     backend: device?.backend || "coredevice",
     osVersion: device?.deviceProperties?.osVersionNumber || null,
     transport: device?.connectionProperties?.transportType || null,
+    tunnelIPAddress: device?.connectionProperties?.tunnelIPAddress || null,
   };
 }
 
@@ -107,6 +108,29 @@ export function createLegacyDevices(stdout) {
   }));
 }
 
+export function listRuntimeTargets({ devices = [] } = {}) {
+  const usablePhysicalDevices = preferWiredUsablePhysicalDevices(
+    devices.filter(isUsablePhysicalDevice)
+  );
+  const targets = usablePhysicalDevices.map((device) => ({
+    mode: "device",
+    deviceUDID: deviceIdentity(device),
+    backend: device?.backend || "coredevice",
+    host: device?.connectionProperties?.tunnelIPAddress || null,
+    selectionReason: isWiredPhysicalDevice(device)
+      ? "usable_wired_physical_device"
+      : "usable_physical_device",
+    fallbackReason: null,
+    physicalDeviceCount: usablePhysicalDevices.length,
+    device: summarizeDevice(device),
+  }));
+
+  return {
+    targets,
+    physicalDeviceCount: usablePhysicalDevices.length,
+  };
+}
+
 export function selectRuntimeTarget({ devices, requestedMode = "auto", requestedDeviceUDID = "" }) {
   const usablePhysicalDevices = devices.filter(isUsablePhysicalDevice);
   if (usablePhysicalDevices.length > 0) {
@@ -124,17 +148,16 @@ export function selectRuntimeTarget({ devices, requestedMode = "auto", requested
       mode: "device",
       deviceUDID: deviceIdentity(selected),
       backend: selected?.backend || "coredevice",
+      host: selected?.connectionProperties?.tunnelIPAddress || null,
       selectionReason: configured
         ? "configured_physical_device"
-        : requestedMode === "simulator"
-          ? "physical_device_precedes_requested_simulator"
-          : requestedDeviceUDID
-            ? "configured_device_unavailable_selected_first_usable_physical_device"
-            : selectedWired
-              ? "first_wired_usable_physical_device"
-              : selectedLegacy
-                ? "first_legacy_physical_device"
-                : "first_usable_physical_device",
+        : requestedDeviceUDID
+          ? "configured_device_unavailable_selected_first_usable_physical_device"
+          : selectedWired
+            ? "first_wired_usable_physical_device"
+            : selectedLegacy
+              ? "first_legacy_physical_device"
+              : "first_usable_physical_device",
       fallbackReason: null,
       physicalDeviceCount: usablePhysicalDevices.length,
       device: summarizeDevice(selected),
@@ -142,8 +165,10 @@ export function selectRuntimeTarget({ devices, requestedMode = "auto", requested
   }
 
   return {
-    mode: "simulator",
+    mode: "none",
     deviceUDID: "",
+    backend: null,
+    host: null,
     selectionReason: "no_usable_physical_device",
     fallbackReason: "no_connected_physical_device_with_developer_services",
     physicalDeviceCount: 0,
@@ -156,7 +181,7 @@ export class RuntimeTargetResolver {
     this.execFileImpl = execFileImpl;
   }
 
-  async resolve(config) {
+  async discoverDevices() {
     const devices = [];
     const errors = [];
 
@@ -182,8 +207,29 @@ export class RuntimeTargetResolver {
       errors.push(`idevice_id:${error?.message || "idevice_id_failed"}`);
     }
 
-    const target = selectRuntimeTarget({
+    return {
       devices: deduplicateDevices(devices),
+      errors,
+    };
+  }
+
+  async listAll(config = {}) {
+    const { devices, errors } = await this.discoverDevices();
+    const listed = listRuntimeTargets({ devices });
+    return {
+      success: true,
+      payload: {
+        ...listed,
+        detectionErrors: errors,
+      },
+      error: null,
+    };
+  }
+
+  async resolve(config) {
+    const { devices, errors } = await this.discoverDevices();
+    const target = selectRuntimeTarget({
+      devices,
       requestedMode: "device",
       requestedDeviceUDID: config.deviceUDID,
     });
@@ -212,7 +258,10 @@ export class RuntimeTargetResolver {
 }
 
 export function applyRuntimeTarget(config, target) {
-  config.deviceUDID = target.deviceUDID;
+  if (target?.mode === "device") {
+    config.deviceUDID = target.deviceUDID || config.deviceUDID;
+  }
   config.runtimeTarget = target;
+  config.tunnelIPAddress = target?.device?.tunnelIPAddress || target?.host || null;
   return config;
 }

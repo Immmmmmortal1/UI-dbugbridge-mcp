@@ -45,17 +45,6 @@ test("legacy device parsing creates wired physical targets without CoreDevice se
   assert.equal(device.connectionProperties.transportType, "wired");
 });
 
-test("a usable physical device wins over an explicitly requested simulator", () => {
-  const target = selectRuntimeTarget({
-    devices: [physicalDevice()],
-    requestedMode: "simulator",
-  });
-
-  assert.equal(target.mode, "device");
-  assert.equal(target.deviceUDID, "device-1");
-  assert.equal(target.selectionReason, "physical_device_precedes_requested_simulator");
-});
-
 test("the configured physical device is selected when more than one device is usable", () => {
   const target = selectRuntimeTarget({
     devices: [
@@ -136,14 +125,46 @@ test("resolver de-duplicates a device reported by both backends", async () => {
   assert.equal(result.payload.backend, "coredevice");
 });
 
-test("simulator is selected only when no usable physical device exists", () => {
+test("no usable physical device returns none instead of a localhost target", () => {
   const target = selectRuntimeTarget({
     devices: [physicalDevice({ connectionProperties: { tunnelState: "unavailable" } })],
     requestedMode: "auto",
   });
 
-  assert.equal(target.mode, "simulator");
+  assert.equal(target.mode, "none");
+  assert.equal(target.host, null);
   assert.equal(target.fallbackReason, "no_connected_physical_device_with_developer_services");
+});
+
+test("listRuntimeTargets only returns physical device targets", async () => {
+  const { listRuntimeTargets } = await import("../src/runtimeTarget.js");
+  const listed = listRuntimeTargets({
+    devices: [physicalDevice()],
+  });
+
+  assert.equal(listed.physicalDeviceCount, 1);
+  assert.equal(listed.targets.length, 1);
+  assert.equal(listed.targets[0].mode, "device");
+  assert.equal(listed.targets.every((target) => target.mode === "device"), true);
+});
+
+test("listAll only includes physical device targets", async () => {
+  const resolver = new RuntimeTargetResolver({
+    execFileImpl: async (command) => {
+      if (command === "xcrun") {
+        return {
+          stdout: JSON.stringify({ result: { devices: [physicalDevice()] } }),
+          stderr: "",
+        };
+      }
+      return { stdout: "", stderr: "" };
+    },
+  });
+
+  const result = await resolver.listAll({});
+  assert.equal(result.success, true);
+  assert.equal(result.payload.physicalDeviceCount, 1);
+  assert.equal(result.payload.targets.every((target) => target.mode === "device"), true);
 });
 
 test("resolver falls back to legacy when CoreDevice detection fails", async () => {

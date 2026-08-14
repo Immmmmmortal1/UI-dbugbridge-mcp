@@ -4,12 +4,19 @@ import UIKit
 public final class LookDebugBridge {
     public static let shared = LookDebugBridge(port: LookDebugPort.resolve())
 
-    public nonisolated static let sessionID =
-        (ProcessInfo.processInfo.environment["DEV_FLOW_SESSION_ID"]?.isEmpty == false
-            ? ProcessInfo.processInfo.environment["DEV_FLOW_SESSION_ID"]!
-            : (ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]?.isEmpty == false
-                ? ProcessInfo.processInfo.environment["CODEX_THREAD_ID"]!
-                : "local"))
+    public nonisolated static let sessionID = {
+        let environment = ProcessInfo.processInfo.environment
+        if let value = environment["DEV_FLOW_SESSION_ID"], value.isEmpty == false {
+            return value
+        }
+        if let value = environment["CODEX_THREAD_ID"], value.isEmpty == false {
+            return value
+        }
+        if let value = environment["CURSOR_CONVERSATION_ID"], value.isEmpty == false {
+            return value
+        }
+        return "local"
+    }()
 
     public nonisolated static let bundleID = Bundle.main.bundleIdentifier ?? "unknown"
 
