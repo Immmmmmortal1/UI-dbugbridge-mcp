@@ -280,9 +280,25 @@ export class PortForwarder {
     await Promise.race([exited, delay(500)]);
   }
 
+  activeForwards() {
+    return [...this.children.entries()].map(([name, entry]) => ({
+      name,
+      pid: entry.child?.pid ?? null,
+      localPort: this.config.portForwards.find((forward) => forward.name === name)?.localPort ?? null,
+      remotePort: this.config.portForwards.find((forward) => forward.name === name)?.remotePort ?? null,
+    }));
+  }
+
   stopAll() {
     for (const name of this.children.keys()) {
       this.stop(name);
+    }
+  }
+
+  async stopAllAndWait() {
+    const names = [...this.children.keys()];
+    for (const name of names) {
+      await this.stopAndWait(name);
     }
   }
 }

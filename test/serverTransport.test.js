@@ -144,6 +144,7 @@ test("tools list exposes DebugBridge logs and removes Xcode/Lookin fallbacks", a
   assert.equal(names.includes("read_app_logs"), true);
   assert.equal(names.includes("wait_app_logs"), true);
   assert.equal(names.includes("inspect_ui"), true);
+  assert.equal(names.includes("release_session"), true);
   assert.equal(names.includes("run_xcode_active_scheme"), false);
   assert.equal(names.includes("read_xcode_console"), false);
   assert.equal(names.includes("wait_xcode_console"), false);

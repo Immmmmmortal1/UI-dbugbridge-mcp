@@ -58,6 +58,26 @@ const tools = [
     },
   },
   {
+    name: "release_session",
+    description:
+      "Release this MCP session's iproxy forwards and optionally exit the server process. Call after dev-flow commit to avoid orphaned port forwards.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        exitAfterRelease: {
+          type: "boolean",
+          description:
+            "When true (default), exit this MCP server after releasing forwards so the host can start a clean instance next session.",
+        },
+        reason: {
+          type: "string",
+          description: "Optional audit reason, e.g. dev-flow commit complete.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "ensure_ports",
     description: "Scan DebugBridge ports on usable physical devices, keep simultaneous discoveries, and activate the matching target.",
     inputSchema: {
@@ -1077,7 +1097,41 @@ async function runFlow(steps) {
   };
 }
 
+async function releaseSession(args = {}) {
+  const exitAfterRelease = args.exitAfterRelease !== false;
+  const releasedForwards = portForwarder.activeForwards();
+  await portForwarder.stopAllAndWait();
+  config.expectedBridgeIdentity = null;
+  if (config.portForwards?.[0]) {
+    config.portForwards[0].localPort = config.portForwards[0].autoAllocate ? 0 : config.portForwards[0].localPort;
+  }
+
+  const payload = {
+    sessionID: config.sessionID,
+    deviceUDID: config.deviceUDID || null,
+    releasedForwards,
+    reason: typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : null,
+    exitAfterRelease,
+  };
+
+  if (exitAfterRelease) {
+    setImmediate(() => {
+      process.exit(0);
+    });
+  }
+
+  return makeToolResult("release_session", {
+    success: true,
+    payload,
+    error: null,
+  });
+}
+
 async function dispatchTool(name, args) {
+  if (name === "release_session") {
+    return releaseSession(args);
+  }
+
   const listed = await runtimeTargetResolver.listAll(config);
   if (!listed.success || !Array.isArray(listed.payload?.targets) || listed.payload.targets.length === 0) {
     return makeToolResult("runtime_target_resolver", {

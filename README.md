@@ -226,6 +226,7 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
 | `ping` | `bundleID?`, `sessionID?`, `deviceUDID?`, `mode?`, `remotePort?` | 扫描全部目标上的活桥并激活一个 |
+| `release_session` | `exitAfterRelease?`, `reason?` | 释放本 MCP 实例的 iproxy；默认随后退出 server 进程 |
 | `ensure_ports` | 同上 | 同上；结果包含 `discovered` 多目标列表 |
 
 ### UI 页面和节点
@@ -313,6 +314,7 @@ sleep
 | `missing_LOOKDEBUG_DEVICE_UDID` | 设置 `LOOKDEBUG_DEVICE_UDID` |
 | `iproxy_not_reachable` | 检查 `iproxy` 路径、设备 UDID 和端口占用 |
 | `debug_bridge_ping_failed` | 确认 App 已启动 DebugBridge 且 `BRIDGE_BASE_URL` 正确 |
+| `release_session` | dev-flow commit 完成后调用，释放本 MCP 实例的 iproxy 并退出进程 |
 | `page_unavailable` | 当前页面没有可用的页面描述或 App 仍在切换页面 |
 | `element_not_found` | 重新调用 `get_debug_page`，使用当前页面中的稳定元素 ID |
 | `unsupported_element_type` | 当前元素不支持请求的操作 |
