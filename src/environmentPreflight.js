@@ -79,6 +79,7 @@ export function selectLiveBridge({
   liveBridges = [],
   expectedIdentity = null,
   preferredDeviceUDID = "",
+  strictDeviceUDID = false,
   preferredMode = "auto",
 } = {}) {
   let candidates = liveBridges.filter((entry) => identityMatches(entry.identity, expectedIdentity));
@@ -90,6 +91,9 @@ export function selectLiveBridge({
     const exact = candidates.filter((entry) => entry.runtimeTarget?.deviceUDID === preferredUDID);
     if (exact.length > 0) {
       candidates = exact;
+    } else if (strictDeviceUDID) {
+      // 显式指定 deviceUDID 但无精确匹配，禁止静默回退到其他设备
+      return null;
     }
   }
 
@@ -181,7 +185,8 @@ async function probeTargetPorts({
 
   for (const [index, remotePort] of candidates.entries()) {
     if (index > 0) {
-      portForwarder.stopAll?.();
+      // 扫描下一个端口前，等待+SIGKILL 清理上一个 iproxy，避免僵尸进程占用端口
+      await portForwarder.stopAllAndWait?.();
     }
     config.portForwards[0].remotePort = remotePort;
 
@@ -245,6 +250,7 @@ export async function runEnvironmentPreflight({
   expectedIdentity = null,
   remotePortCandidates,
   preferredDeviceUDID = "",
+  strictDeviceUDID = false,
   preferredMode = "auto",
 }) {
   const startedAt = Date.now();
@@ -274,7 +280,8 @@ export async function runEnvironmentPreflight({
 
   for (const [targetIndex, target] of targetList.entries()) {
     if (targetIndex > 0) {
-      portForwarder.stopAll?.();
+      // 扫描下一个设备前，等待+SIGKILL 清理上一个设备的 iproxy，避免僵尸进程
+      await portForwarder.stopAllAndWait?.();
     }
 
     const probed = await probeTargetPorts({
@@ -295,11 +302,15 @@ export async function runEnvironmentPreflight({
     liveBridges,
     expectedIdentity,
     preferredDeviceUDID: preferredDeviceUDID || config?.deviceUDID || "",
+    strictDeviceUDID,
     preferredMode,
   });
 
   if (!selected) {
     const mismatch = Boolean(expectedIdentity?.bundleID || expectedIdentity?.sessionID)
+      && liveBridges.length > 0;
+    const deviceMismatch = strictDeviceUDID
+      && String(preferredDeviceUDID || "").trim()
       && liveBridges.length > 0;
     return {
       success: false,
@@ -318,14 +329,20 @@ export async function runEnvironmentPreflight({
           lastFailure?.bridgeCheck ?? {
             name: "debug_bridge_ping",
             success: false,
-            error: mismatch ? "bridge_target_mismatch" : "debug_bridge_ping_failed",
+            error: mismatch
+              ? "bridge_target_mismatch"
+              : deviceMismatch
+                ? "bridge_device_mismatch"
+                : "debug_bridge_ping_failed",
           },
         ],
         elapsedMs: Date.now() - startedAt,
       },
       error: mismatch
         ? "lookdebug_environment_preflight_failed:bridge_target_mismatch"
-        : "lookdebug_environment_preflight_failed:debug_bridge_ping",
+        : deviceMismatch
+          ? "lookdebug_environment_preflight_failed:bridge_device_mismatch"
+          : "lookdebug_environment_preflight_failed:debug_bridge_ping",
     };
   }
 

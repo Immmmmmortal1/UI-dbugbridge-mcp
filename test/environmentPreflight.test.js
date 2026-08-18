@@ -9,6 +9,8 @@ function makeDependencies(overrides = {}) {
     runtimeTarget: { mode: "device", deviceUDID: "device-1" },
     portForwarder: {
       ensureAll: async () => ({ success: true, payload: { forwards: [] }, error: null }),
+      // 扫描切换时调用 stopAllAndWait，提供空实现以匹配新契约
+      stopAllAndWait: async () => {},
     },
     bridgeClient: {
       baseURL: "http://127.0.0.1:37777",
@@ -88,6 +90,7 @@ test("preflight scans the next remote port when the first bridge belongs to anot
     return { success: true, payload: { forwards: [] }, error: null };
   };
   dependencies.portForwarder.stopAll = () => {};
+  dependencies.portForwarder.stopAllAndWait = async () => {};
   dependencies.bridgeClient.getIdentity = async () => ({
     ok: true,
     status: 200,
@@ -112,6 +115,7 @@ test("preflight ignores a localhost target when a physical device is present", a
   const dependencies = makeDependencies();
   const calls = [];
   dependencies.portForwarder.stopAll = () => {};
+  dependencies.portForwarder.stopAllAndWait = async () => {};
   dependencies.bridgeClient.setBaseURL = (baseURL) => {
     dependencies.bridgeClient.baseURL = baseURL;
   };

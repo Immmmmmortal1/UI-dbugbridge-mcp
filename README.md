@@ -175,7 +175,8 @@ LOOKDEBUG_DEVICE_UDID = "<physical-device-udid>"
 IPROXY_PATH = "iproxy"
 # Optional: omit to allocate a unique local port per MCP process.
 # BRIDGE_LOCAL_PORT = "37777"
-BRIDGE_REMOTE_PORT = "37777"
+# BRIDGE_REMOTE_PORT 必须在 42671-42770 范围内，否则回退到默认扫描
+# BRIDGE_REMOTE_PORT = "42671"
 DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 ```
 
@@ -183,15 +184,18 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 
 | 配置项 | 必须 | 说明 |
 | --- | --- | --- |
-| `BRIDGE_BASE_URL` | 否 | 默认自动生成实际本机转发地址；设置后视为固定本机/远端地址 |
+| `BRIDGE_BASE_URL` | 否 | 默认自动生成实际本机转发地址；host 仅允许回环（127.0.0.1/localhost/::1），非回环需显式开启 `LOOKDEBUG_ALLOW_ANY_URL` |
 | `LOOKDEBUG_DEVICE_UDID` | 是 | 指定优先使用的物理设备 UDID |
 | `IPROXY_PATH` | 否 | 默认 `iproxy` |
-| `BRIDGE_LOCAL_PORT` | 否 | 默认自动分配本机端口；设置后固定使用指定端口，若被其他转发占用则失败 |
-| `BRIDGE_REMOTE_PORT` | 否 | 默认扫描 `42671-42770`；设置后固定使用指定端口 |
+| `BRIDGE_LOCAL_PORT` | 否 | 默认自动分配本机端口；设置后固定使用指定端口（1-65535），若被其他转发占用则失败 |
+| `BRIDGE_REMOTE_PORT` | 否 | 默认扫描 `42671-42770`；设置后固定使用指定端口，必须在 42671-42770 内，否则回退到默认 |
 | `DEV_FLOW_SESSION_ID` | 否 | DevFlow 上下文标识，只用于运行上下文回传；未设置时回退 `CODEX_THREAD_ID`、`CURSOR_CONVERSATION_ID` |
-| `LOOKDEBUG_SCREENSHOT_COMMAND` | 否 | 外部截图命令；使用 `{output}` 作为输出文件占位符 |
+| `LOOKDEBUG_SCREENSHOT_COMMAND` | 否 | 外部截图命令；使用 `{output}` 作为输出文件占位符（占位符替换后做 shell 转义，防止注入） |
+| `LOOKDEBUG_ARTIFACT_ROOT` | 否 | artifact 根目录，设置后 `audit_runtime` 的输入/输出路径必须位于其内；未设置时写操作默认拒绝 |
+| `LOOKDEBUG_ALLOW_ANY_PORT` | 否 | 危险开关，默认关闭。开启后允许 `BRIDGE_LOCAL_PORT`/`BRIDGE_REMOTE_PORT` 超出常规范围 |
+| `LOOKDEBUG_ALLOW_ANY_URL` | 否 | 危险开关，默认关闭。开启后允许 `BRIDGE_BASE_URL` 指向非回环主机 |
 
-截图不是 UI 树或日志的依赖能力。未配置 `LOOKDEBUG_SCREENSHOT_COMMAND` 时，`get_screenshot` 返回 `screenshot_command_not_configured`。
+截图不是 UI 树或日志的依赖能力。未配置 `LOOKDEBUG_SCREENSHOT_COMMAND` 时，`get_screenshot` 返回 `screenshot_command_not_configured`。配置后执行返回结果会带 `warning: screenshot_command_executed_as_configured` 提示。
 
 ## 标准真机调试流程
 

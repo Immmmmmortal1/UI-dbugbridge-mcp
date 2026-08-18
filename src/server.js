@@ -1,14 +1,35 @@
-import { loadConfig } from "./config.js";
-import { runEnvironmentPreflight } from "./environmentPreflight.js";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { loadConfig, MAX_MESSAGE_BYTES } from "./config.js";
+import { identityMatches, runEnvironmentPreflight } from "./environmentPreflight.js";
 import { HTTPBridgeClient } from "./httpBridgeClient.js";
 import { PortForwarder } from "./portForwarder.js";
 import { ScreenshotClient } from "./screenshotClient.js";
 import { applyRuntimeTarget, RuntimeTargetResolver } from "./runtimeTarget.js";
 import {
+  assertArtifactPath,
+  assertFileSize,
   buildRuntimeAuditReport,
+  MAX_FIGMA_RAW_BYTES,
   writeJSONArtifact,
   writeRuntimeAuditArtifacts,
 } from "./runtimeAudit.js";
+
+// 从 package.json 读取版本号，避免硬编码导致与 package.json 不一致
+const PACKAGE_VERSION = (() => {
+  try {
+    const packageJsonPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "package.json"
+    );
+    const { version } = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    return typeof version === "string" && version.trim() ? version.trim() : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 const config = loadConfig();
 const bridgeClient = new HTTPBridgeClient({ baseURL: config.bridgeBaseURL });
@@ -780,6 +801,58 @@ function requestedBridgeIdentity(args) {
   };
 }
 
+// 控制类工具执行前重新校验当前 bridge identity 是否仍匹配预期
+// 不匹配则失败，防止用户在两次调用间切换 App/设备后误操作
+async function verifyBridgeIdentity(expectedIdentity) {
+  if (!expectedIdentity || (!expectedIdentity.bundleID && !expectedIdentity.sessionID)) {
+    return { success: true };
+  }
+  let identityResult;
+  try {
+    identityResult = await bridgeClient.getIdentity();
+  } catch (error) {
+    return { success: false, error: `bridge_identity_check_failed:${error.message}` };
+  }
+  if (!identityResult?.ok || !identityResult?.payload) {
+    return {
+      success: false,
+      error: `bridge_identity_unreachable:${bridgeError(identityResult)}`,
+    };
+  }
+  if (!identityMatches(identityResult.payload, expectedIdentity)) {
+    return { success: false, error: "bridge_target_mismatch_during_control" };
+  }
+  return { success: true };
+}
+
+// 包装可能抛异常的 bridge 调用，统一返回标准 tool result，避免上抛 JSON-RPC transport error
+async function safeBridgeCall(source, fn) {
+  try {
+    const result = await fn();
+    return makeToolResult(source, {
+      success: bridgeResultOK(result),
+      payload: result.payload,
+      error: bridgeError(result),
+    });
+  } catch (error) {
+    return makeToolResult(source, {
+      success: false,
+      payload: null,
+      error: error.message,
+    });
+  }
+}
+
+// tools/call 全局串行队列：消除并发修改 config/bridgeClient/portForwards 的竞态
+// 初始化响应仍立即返回，仅串行化 tools/call 业务处理
+let toolsCallQueue = Promise.resolve();
+function serializeToolsCall(handler) {
+  const next = toolsCallQueue.then(handler, handler);
+  // 队列指针始终跟进到下一次，即使本次失败也不阻塞后续
+  toolsCallQueue = next.catch(() => {});
+  return next;
+}
+
 function requestedRuntimeMode(args) {
   const mode = String(args?.mode || "auto").trim();
   return ["auto", "device"].includes(mode) ? mode : "auto";
@@ -1128,6 +1201,19 @@ async function releaseSession(args = {}) {
 }
 
 async function dispatchTool(name, args) {
+  // 顶层错误兜底：所有未捕获异常统一转为 tool result，避免上抛 JSON-RPC transport error
+  try {
+    return await dispatchToolInner(name, args);
+  } catch (error) {
+    return makeToolResult("dispatch_tool", {
+      success: false,
+      payload: null,
+      error: error.message,
+    });
+  }
+}
+
+async function dispatchToolInner(name, args) {
   if (name === "release_session") {
     return releaseSession(args);
   }
@@ -1152,12 +1238,23 @@ async function dispatchTool(name, args) {
 
   const preferredMode = requestedRuntimeMode(args);
   const preferredDeviceUDID = String(args?.deviceUDID || "").trim();
+  // 严格匹配生效条件：请求参数显式传了 deviceUDID，或环境变量 LOOKDEBUG_DEVICE_UDID 配置了 deviceUDID
+  // 配置来源的 deviceUDID 也作为强制目标：无匹配活桥 → 直接失败，不静默回退到其他设备
+  // 注意：必须在 applyRuntimeTarget 覆盖 config.deviceUDID 之前读取
+  const configuredDeviceUDID = String(config.deviceUDID || "").trim();
+  const strictDeviceUDID = preferredDeviceUDID.length > 0 || configuredDeviceUDID.length > 0;
+  // 合并请求参数和环境变量的 deviceUDID：请求参数优先，否则用配置值
+  // 这样 selectLiveBridge 的 preferredUDID 能匹配到配置的设备（applyRuntimeTarget 后 config.deviceUDID 已被覆盖）
+  const effectivePreferredDeviceUDID = preferredDeviceUDID || configuredDeviceUDID;
   const defaultTarget = deviceTargets[0];
   applyRuntimeTarget(config, defaultTarget);
 
   const requestedIdentity = requestedBridgeIdentity(args);
+  // 不复用上一次调用残留的 expectedBridgeIdentity：每次调用重新评估
   if (Object.keys(requestedIdentity).length > 0) {
     config.expectedBridgeIdentity = requestedIdentity;
+  } else {
+    config.expectedBridgeIdentity = null;
   }
   const expectedBridgeIdentity = config.expectedBridgeIdentity ?? null;
   const remotePortCandidates = Number.isInteger(args?.remotePort)
@@ -1172,7 +1269,8 @@ async function dispatchTool(name, args) {
     runtimeTarget: defaultTarget,
     expectedIdentity: expectedBridgeIdentity,
     remotePortCandidates,
-    preferredDeviceUDID,
+    preferredDeviceUDID: effectivePreferredDeviceUDID,
+    strictDeviceUDID,
     preferredMode,
   });
 
@@ -1180,30 +1278,35 @@ async function dispatchTool(name, args) {
     return makeToolResult("lookdebug_environment_preflight", preflight);
   }
 
+  // 控制类工具执行前重新校验目标 identity，防止切换 App/设备后误操作
+  const isControlTool = name === "tap_element"
+    || name === "set_switch"
+    || name === "set_text"
+    || name === "type_text"
+    || name === "run_flow";
+  if (isControlTool) {
+    const verification = await verifyBridgeIdentity(expectedBridgeIdentity);
+    if (!verification.success) {
+      return makeToolResult("http_bridge", {
+        success: false,
+        payload: null,
+        error: verification.error,
+      });
+    }
+  }
+
   switch (name) {
     case "ensure_ports":
       return makeToolResult("lookdebug_environment_preflight", preflight);
     case "inspect_ui":
-      {
-        const result = await bridgeClient.getWindowTree(args);
-        return makeToolResult("debug_bridge", {
-          success: bridgeResultOK(result),
-          payload: result.payload,
-          error: bridgeError(result),
-        });
-      }
+      // 读工具统一包装：网络/JSON 异常返回 tool result，不抛 transport error
+      return safeBridgeCall("debug_bridge", () => bridgeClient.getWindowTree(args));
     case "read_app_logs":
-    case "wait_app_logs": {
-      const result = await bridgeClient.readLogs({
+    case "wait_app_logs":
+      return safeBridgeCall("debug_bridge_logs", () => bridgeClient.readLogs({
         ...args,
         waitMs: name === "wait_app_logs" ? (args.waitMs ?? 30_000) : 0,
-      });
-      return makeToolResult("debug_bridge_logs", {
-        success: bridgeResultOK(result),
-        payload: result.payload,
-        error: bridgeError(result),
-      });
-    }
+      }));
     case "get_debug_page":
     case "get_page": {
       let pageResult;
@@ -1238,7 +1341,17 @@ async function dispatchTool(name, args) {
       });
     }
     case "get_runtime_node": {
-      const result = await bridgeClient.getRuntimeNode(args.anchor);
+      // 网络异常统一捕获，返回 tool result
+      let result;
+      try {
+        result = await bridgeClient.getRuntimeNode(args.anchor);
+      } catch (error) {
+        return makeToolResult("http_bridge", {
+          success: false,
+          payload: null,
+          error: error.message,
+        });
+      }
       let payload = result.payload;
       let artifactPath = null;
       if (args.saveArtifact && payload) {
@@ -1256,7 +1369,17 @@ async function dispatchTool(name, args) {
       });
     }
     case "tap_element": {
-      const result = await bridgeClient.tapElement(args.id);
+      // 控制请求：bridgeClient.tapElement 网络异常统一捕获
+      let result;
+      try {
+        result = await bridgeClient.tapElement(args.id);
+      } catch (error) {
+        return makeToolResult("http_bridge", {
+          success: false,
+          payload: null,
+          error: error.message,
+        });
+      }
       let nextPage = null;
       if (bridgeResultOK(result)) {
         try {
@@ -1311,7 +1434,17 @@ async function dispatchTool(name, args) {
       });
     }
     case "set_switch": {
-      const result = await bridgeClient.setSwitch(args.id, args.isOn);
+      // 控制请求：bridgeClient.setSwitch 网络异常统一捕获
+      let result;
+      try {
+        result = await bridgeClient.setSwitch(args.id, args.isOn);
+      } catch (error) {
+        return makeToolResult("http_bridge", {
+          success: false,
+          payload: null,
+          error: error.message,
+        });
+      }
       let nextPage = null;
       if (bridgeResultOK(result)) {
         try {
@@ -1367,9 +1500,19 @@ async function dispatchTool(name, args) {
     }
     case "set_text":
     case "type_text": {
-      const result = name === "set_text"
-        ? await bridgeClient.setText(args.id, args.text)
-        : await bridgeClient.typeText(args.id, args.text);
+      // 控制请求：bridgeClient.setText/typeText 网络异常统一捕获
+      let result;
+      try {
+        result = name === "set_text"
+          ? await bridgeClient.setText(args.id, args.text)
+          : await bridgeClient.typeText(args.id, args.text);
+      } catch (error) {
+        return makeToolResult("http_bridge", {
+          success: false,
+          payload: null,
+          error: error.message,
+        });
+      }
       let nextPage = null;
       if (bridgeResultOK(result)) {
         try {
@@ -1458,6 +1601,37 @@ async function dispatchTool(name, args) {
     }
     case "audit_runtime": {
       try {
+        // artifact 路径限制：figmaRawPath 读操作允许未配置 root，但写操作（artifactDir/outJsonPath/outMarkdownPath）必须位于 root 内
+        const artifactRoot = config.artifactRoot || null;
+        const figmaRawPathResolved = await assertArtifactPath(args.figmaRawPath, {
+          root: artifactRoot,
+          allowWrite: false,
+        });
+        // 输入文件大小限制，防止读入超大文件耗尽内存
+        await assertFileSize(figmaRawPathResolved, MAX_FIGMA_RAW_BYTES);
+        // audit_runtime 总会写 pageArtifact（writeJSONArtifact 无条件调用）
+        // 未配置 root 时一律拒绝，无论是否传 artifactDir（默认 .devflow-ui/runtime 也不允许）
+        if (!artifactRoot) {
+          return makeToolResult("runtime_audit", {
+            success: false,
+            payload: null,
+            error: "artifact_root_not_configured_for_write",
+          });
+        }
+        // 写路径校验：artifactDir、outJsonPath、outMarkdownPath 都必须在 root 内
+        // 配置了 root 但未传 artifactDir 时，默认使用 {root}/runtime，保证默认写路径也在 root 内
+        const defaultArtifactDir = path.join(artifactRoot, "runtime");
+        const artifactDirResolved = await assertArtifactPath(
+          args.artifactDir || defaultArtifactDir,
+          { root: artifactRoot, allowWrite: true }
+        );
+        const outJsonPathResolved = args.outJsonPath
+          ? await assertArtifactPath(args.outJsonPath, { root: artifactRoot, allowWrite: true })
+          : undefined;
+        const outMarkdownPathResolved = args.outMarkdownPath
+          ? await assertArtifactPath(args.outMarkdownPath, { root: artifactRoot, allowWrite: true })
+          : undefined;
+
         const page = await getPageOrThrow({
           timeoutMs: args.timeoutMs ?? DEFAULT_PAGE_TIMEOUT_MS,
           intervalMs: args.intervalMs ?? DEFAULT_PAGE_INTERVAL_MS,
@@ -1470,22 +1644,22 @@ async function dispatchTool(name, args) {
           });
         }
         const pageArtifactPath = await writeJSONArtifact(page, {
-          artifactDir: args.artifactDir,
+          artifactDir: artifactDirResolved,
           artifactPrefix: args.artifactPrefix || page.pageID || "runtime-audit",
           suffix: "debug-page",
         });
         const report = await buildRuntimeAuditReport({
-          figmaRawPath: args.figmaRawPath,
+          figmaRawPath: figmaRawPathResolved,
           figmaNodeID: args.figmaNodeID,
           page,
           expectedPageID: args.expectedPageID,
           labelAliases: args.labelAliases,
         });
         const reportArtifacts = await writeRuntimeAuditArtifacts(report, {
-          artifactDir: args.artifactDir,
+          artifactDir: artifactDirResolved,
           artifactPrefix: args.artifactPrefix || `${page.pageID || "page"}-runtime-audit`,
-          outJsonPath: args.outJsonPath,
-          outMarkdownPath: args.outMarkdownPath,
+          outJsonPath: outJsonPathResolved,
+          outMarkdownPath: outMarkdownPathResolved,
         });
         return makeToolResult("runtime_audit", {
           success: true,
@@ -1508,14 +1682,9 @@ async function dispatchTool(name, args) {
         });
       }
     }
-    case "get_ui_hierarchy": {
-      const result = await bridgeClient.getWindowTree({ depth: 8, maxNodes: 2_000 });
-      return makeToolResult("debug_bridge", {
-        success: bridgeResultOK(result),
-        payload: result.payload,
-        error: bridgeError(result),
-      });
-    }
+    case "get_ui_hierarchy":
+      // 读工具统一包装：网络/JSON 异常返回 tool result，不抛 transport error
+      return safeBridgeCall("debug_bridge", () => bridgeClient.getWindowTree({ depth: 8, maxNodes: 2_000 }));
     case "get_screenshot":
       return makeToolResult("screenshot_command", await screenshotClient.getScreenshot());
     default:
@@ -1561,7 +1730,8 @@ async function handleMessage(message) {
           },
           serverInfo: {
             name: "lookdebug-mcp",
-            version: "0.1.0",
+            // 版本号从 package.json 读取，避免与 package.json 不一致
+            version: PACKAGE_VERSION,
           },
           instructions: [
             "LookDebugBridge / lookdebug-mcp discovers DebugBridge on connected physical devices.",
@@ -1579,7 +1749,9 @@ async function handleMessage(message) {
         writeResponse(id, { tools });
         return;
       case "tools/call":
-        writeResponse(id, await dispatchTool(params.name, params.arguments || {}));
+        // tools/call 通过全局 promise 队列串行执行，消除并发修改 config/bridgeClient 的竞态
+        // 初始化响应仍立即返回，仅串行化 tools/call 业务处理
+        writeResponse(id, await serializeToolsCall(() => dispatchTool(params.name, params.arguments || {})));
         return;
       default:
         writeError(id ?? null, -32601, `method_not_found:${method}`);
@@ -1587,6 +1759,53 @@ async function handleMessage(message) {
   } catch (error) {
     writeError(id ?? null, -32000, error.message);
   }
+}
+
+// 校验 JSON-RPC 消息结构：jsonrpc=="2.0"、method 是字符串、params 是对象（可选）、id 合法
+function validateJSONRPCMessage(message) {
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return "invalid_request:not_an_object";
+  }
+  if (message.jsonrpc !== "2.0") {
+    return "invalid_request:jsonrpc_not_2_0";
+  }
+  if (typeof message.method !== "string" || message.method.length === 0) {
+    return "invalid_request:method_not_string";
+  }
+  if (message.params !== undefined && message.params !== null) {
+    if (typeof message.params !== "object" || Array.isArray(message.params)) {
+      return "invalid_request:params_not_object";
+    }
+  }
+  // id 可选：字符串/数字/null；通知无 id 字段
+  if (message.id !== undefined && message.id !== null) {
+    if (typeof message.id !== "string" && typeof message.id !== "number") {
+      return "invalid_request:id_invalid_type";
+    }
+  }
+  return null;
+}
+
+// 处理单条已切片的消息字节：JSON.parse + 结构校验 + 派发
+// 任何解析/校验失败都返回 JSON-RPC error，不上抛异常杀进程
+function parseAndDispatch(messageBytes) {
+  let message;
+  try {
+    message = JSON.parse(messageBytes.toString("utf8"));
+  } catch (error) {
+    // 非法 JSON：返回 -32700 Parse error
+    writeError(null, -32700, `parse_error:${error.message}`);
+    return;
+  }
+
+  const validationError = validateJSONRPCMessage(message);
+  if (validationError) {
+    // 结构不合法：返回 -32602 Invalid params / -32600 Invalid request
+    writeError(message?.id ?? null, -32602, validationError);
+    return;
+  }
+
+  void handleMessage(message);
 }
 
 function consumeBuffer() {
@@ -1603,17 +1822,34 @@ function consumeBuffer() {
     if (buffer[0] === 0x7b) {
       const newlineIndex = buffer.indexOf("\n");
       if (newlineIndex === -1) {
+        // 消息大小上限：超限返回 -32602 并丢弃，防止恶意/异常大消息耗尽内存
+        if (buffer.length > MAX_MESSAGE_BYTES) {
+          const oversized = buffer.length;
+          buffer = Buffer.alloc(0);
+          writeError(null, -32602, `message_too_large:${oversized}>${MAX_MESSAGE_BYTES}`);
+          return;
+        }
         return;
       }
       const messageBytes = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 1);
-      const message = JSON.parse(messageBytes.toString("utf8"));
-      void handleMessage(message);
+      // 消息大小上限校验
+      if (messageBytes.length > MAX_MESSAGE_BYTES) {
+        writeError(null, -32602, `message_too_large:${messageBytes.length}>${MAX_MESSAGE_BYTES}`);
+        continue;
+      }
+      parseAndDispatch(messageBytes);
       continue;
     }
 
     const separatorIndex = buffer.indexOf("\r\n\r\n");
     if (separatorIndex === -1) {
+      // 累积超过上限仍未找到分隔符，丢弃并返回错误
+      if (buffer.length > MAX_MESSAGE_BYTES) {
+        const oversized = buffer.length;
+        buffer = Buffer.alloc(0);
+        writeError(null, -32602, `header_too_large:${oversized}>${MAX_MESSAGE_BYTES}`);
+      }
       return;
     }
 
@@ -1623,10 +1859,33 @@ function consumeBuffer() {
       .find((line) => line.toLowerCase().startsWith("content-length:"));
 
     if (!contentLengthLine) {
-      throw new Error("missing_content_length");
+      // 缺少 Content-Length：丢弃此消息并返回 -32602，不杀进程
+      buffer = buffer.slice(separatorIndex + 4);
+      writeError(null, -32602, "missing_content_length");
+      continue;
     }
 
-    const contentLength = Number(contentLengthLine.split(":")[1].trim());
+    const contentLengthValue = contentLengthLine.split(":")[1].trim();
+    const contentLength = Number.parseInt(contentLengthValue, 10);
+    // Content-Length 必须是非负有限整数
+    if (!Number.isInteger(contentLength) || contentLength < 0) {
+      buffer = buffer.slice(separatorIndex + 4);
+      writeError(null, -32602, `invalid_content_length:${contentLengthValue}`);
+      continue;
+    }
+    // 消息大小上限校验
+    if (contentLength > MAX_MESSAGE_BYTES) {
+      const messageStart = separatorIndex + 4;
+      const messageEnd = messageStart + contentLength;
+      if (buffer.length >= messageEnd) {
+        buffer = buffer.slice(messageEnd);
+      } else {
+        // 消息体尚未完整接收，但已超限，直接清空 buffer
+        buffer = Buffer.alloc(0);
+      }
+      writeError(null, -32602, `message_too_large:${contentLength}>${MAX_MESSAGE_BYTES}`);
+      continue;
+    }
     const messageStart = separatorIndex + 4;
     const messageEnd = messageStart + contentLength;
     if (buffer.length < messageEnd) {
@@ -1635,8 +1894,7 @@ function consumeBuffer() {
 
     const messageBytes = buffer.slice(messageStart, messageEnd);
     buffer = buffer.slice(messageEnd);
-    const message = JSON.parse(messageBytes.toString("utf8"));
-    void handleMessage(message);
+    parseAndDispatch(messageBytes);
   }
 }
 

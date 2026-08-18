@@ -262,7 +262,12 @@ export class PortForwarder {
     if (!entry) {
       return;
     }
-    entry.child.kill();
+    // 同步 stop 仅发 SIGTERM；如需等待退出并升级到 SIGKILL，请使用 stopAndWait
+    try {
+      entry.child.kill("SIGTERM");
+    } catch {
+      // 进程已退出或不可信号，忽略
+    }
     this.children.delete(name);
   }
 
@@ -273,11 +278,37 @@ export class PortForwarder {
     }
 
     const child = entry.child;
-    const exited = isRunning(child)
-      ? new Promise((resolve) => child.once("exit", resolve))
-      : Promise.resolve();
-    this.stop(name);
-    await Promise.race([exited, delay(500)]);
+    if (!isRunning(child)) {
+      // 已退出，直接清理状态
+      this.children.delete(name);
+      return;
+    }
+
+    // 先 SIGTERM，500ms 内未退出再 SIGKILL，等待 exit 后再清理状态
+    await new Promise((resolve) => {
+      let exited = false;
+      child.once("exit", () => {
+        exited = true;
+        resolve();
+      });
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        exited = true;
+        resolve();
+      }
+      delay(500).then(() => {
+        if (!exited && isRunning(child)) {
+          // 500ms 内未退出，升级到 SIGKILL 强制结束
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // 忽略二次 kill 错误
+          }
+        }
+      });
+    });
+    this.children.delete(name);
   }
 
   activeForwards() {

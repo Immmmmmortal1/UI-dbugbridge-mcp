@@ -1,5 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+// audit_runtime 输入文件大小上限（20MB），防止读入超大文件耗尽内存
+export const MAX_FIGMA_RAW_BYTES = 20 * 1024 * 1024;
 
 const APP_OWNED_TYPES = new Set(["TEXT", "INSTANCE", "COMPONENT", "FRAME", "GROUP"]);
 const SYSTEM_NAME_PATTERNS = [
@@ -29,6 +32,102 @@ export function sanitizeArtifactName(value) {
     .replace(/[^0-9a-z._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80) || "artifact";
+}
+
+// 校验候选路径是否位于根目录内（path.relative 校验，禁 ../ 逃逸）
+export function isPathInside(candidatePath, rootPath) {
+  const resolved = path.resolve(candidatePath);
+  const root = path.resolve(rootPath);
+  const rel = path.relative(root, resolved);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+// 找到 candidatePath 的最深已存在祖先，返回其 realpath
+// 用于校验尚未创建的写路径：realpath(不存在路径) 会抛 ENOENT，无法发现父目录的符号链接逃逸
+// 注意：TOCTOU 残余风险在本地 debug 工具可接受，不做 fd 级加固
+async function realpathOfDeepestExisting(candidatePath) {
+  let current = path.resolve(candidatePath);
+  let attempts = 0;
+  // 逐级向父目录找第一个存在的路径，防止死循环限制 64 级
+  while (attempts < 64) {
+    attempts += 1;
+    try {
+      return await realpath(current);
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      // 已到根目录仍不存在，理论上不应发生
+      return current;
+    }
+    current = parent;
+  }
+  return current;
+}
+
+// 校验路径位于 artifact root 内，并额外检查符号链接逃逸（realpath 后再次校验）
+// 未配置 root 时：allowWrite=true 直接拒绝（默认拒绝写操作），allowWrite=false 保持现状
+// 错误消息不泄漏绝对路径，详细路径写 console.error 供调试
+export async function assertArtifactPath(inputPath, { root, allowWrite, allowSymlink = false }) {
+  if (!inputPath) {
+    return inputPath;
+  }
+  const resolved = path.resolve(inputPath);
+  if (!root) {
+    if (allowWrite) {
+      // 未配置 LOOKDEBUG_ARTIFACT_ROOT 时，对写操作默认拒绝
+      throw new Error("artifact_root_not_configured_for_write");
+    }
+    // 读操作未配置 root 时保持现状（向后兼容）
+    return resolved;
+  }
+  if (!isPathInside(resolved, root)) {
+    // 路径逃逸：详细路径写 DEBUG 日志，错误消息用稳定错误码
+    console.error("[lookdebug-mcp] artifact_path_outside_root path=%s root=%s", resolved, path.resolve(root));
+    throw new Error("artifact_path_outside_root");
+  }
+  if (!allowSymlink) {
+    // 符号链接逃逸检查：root 和 candidate 都做 realpath
+    // root 用 realpath 避免系统符号链接（/tmp → /private/tmp）误报
+    // candidate 不存在时，找最深已存在祖先做 realpath，发现父目录的符号链接逃逸
+    let rootReal;
+    try {
+      rootReal = await realpath(path.resolve(root));
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+      rootReal = path.resolve(root);
+    }
+    try {
+      const candidateReal = await realpathOfDeepestExisting(resolved);
+      if (!isPathInside(candidateReal, rootReal)) {
+        console.error("[lookdebug-mcp] artifact_symlink_escape real=%s root_real=%s", candidateReal, rootReal);
+        throw new Error("artifact_symlink_escape");
+      }
+    } catch (error) {
+      if (error.message === "artifact_symlink_escape") {
+        throw error;
+      }
+      // 其他非预期错误（权限等）也不放过，但用稳定错误码
+      console.error("[lookdebug-mcp] artifact_realpath_check_failed error=%s path=%s", error.message, resolved);
+      throw new Error("artifact_realpath_check_failed");
+    }
+  }
+  return resolved;
+}
+
+// 校验输入文件大小不超过上限，防止读入超大文件
+export async function assertFileSize(filePath, maxBytes) {
+  const info = await stat(filePath);
+  if (info.size > maxBytes) {
+    // 文件大小不涉及敏感信息，保留在错误消息中便于定位
+    throw new Error(`file_too_large:${info.size}>${maxBytes}`);
+  }
+  return info.size;
 }
 
 export function timestamp() {
