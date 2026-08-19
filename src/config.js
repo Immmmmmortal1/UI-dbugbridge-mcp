@@ -77,6 +77,10 @@ function sessionPort(sessionID) {
 }
 
 export function loadConfig(env = process.env) {
+  // BRIDGE_BASE_URL / BRIDGE_LOCAL_PORT 的默认值（127.0.0.1:37777）仅 iproxy 模式使用：
+  // - iproxy 模式：本地启动 iproxy 把设备远程端口转回 37777，MCP 访问 127.0.0.1:37777
+  // - CoreDevice 隧道模式：ensureBridgeReachable 会用 tunnelIP 覆盖 bridgeBaseURL，
+  //   BRIDGE_BASE_URL / BRIDGE_LOCAL_PORT 在此模式下不生效，请勿据此探测本地端口
   const bridgeBaseURLValue = (env.BRIDGE_BASE_URL || "http://127.0.0.1:37777").trim();
   const screenshotCommand = sanitizeCommand(env.LOOKDEBUG_SCREENSHOT_COMMAND || "");
   const deviceUDID = (env.LOOKDEBUG_DEVICE_UDID || "").trim();

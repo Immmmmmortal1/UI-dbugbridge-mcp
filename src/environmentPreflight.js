@@ -207,6 +207,23 @@ async function probeTargetPorts({
       continue;
     }
 
+    // 会话注入必须发生在 getIdentity 之前：
+    // App 首次启动（devicectl launch 不注入环境变量）identity.sessionID 恒为 "local"，
+    // 若先读 identity 再注入，selectLiveBridge 用真实 sessionID 匹配会因 local 失败而选不到桥（死锁）。
+    // 先注入真实会话 id，identity 才能返回正确 sessionID 供匹配。
+    // 失败不阻断探测（仍按原 identity 记录），仅记录 warning。
+    let sessionInjection = null;
+    const probeSessionID = config?.sessionID;
+    if (probeSessionID && probeSessionID !== "local" && typeof bridgeClient.setSession === "function") {
+      const injection = await captureResult(() => bridgeClient.setSession(probeSessionID));
+      sessionInjection = (injection?.ok && injection.payload)
+        ? { success: true }
+        : { success: false, error: injection?.error || injection?.payload?.error || "session_injection_failed" };
+      if (!sessionInjection.success) {
+        console.error(`[environmentPreflight] probe session injection failed: ${sessionInjection.error}`);
+      }
+    }
+
     let identity = null;
     if (typeof bridgeClient.getIdentity === "function") {
       const identityResult = await captureResult(() => bridgeClient.getIdentity());
@@ -220,6 +237,7 @@ async function probeTargetPorts({
       remotePort,
       bridgeBaseURL: bridgeClient.baseURL,
       identity,
+      sessionInjection,
       checks: [portForwardCheck, bridgeCheck],
     });
   }
@@ -348,6 +366,28 @@ export async function runEnvironmentPreflight({
 
   activateBridge({ config, bridgeClient, selected });
 
+  // 会话 id 注入：把 Mac 侧真实 sessionID 推给 App，App 的 identity 才能返回正确值
+  // - 仅当存在真实会话 id（非 "local"）时才注入；App 默认即 "local"，注入无意义
+  // - 失败不阻断 preflight（仅记录 warning），避免桥已通但注入接口异常时整链路失败
+  // - 幂等：每次 preflight 都执行，App 重启后重连会再次注入
+  const sessionID = config?.sessionID;
+  let sessionInjection = null;
+  if (sessionID && sessionID !== "local" && typeof bridgeClient.setSession === "function") {
+    const injectionResult = await captureResult(() => bridgeClient.setSession(sessionID));
+    if (injectionResult?.ok && injectionResult.payload) {
+      sessionInjection = { success: true };
+    } else {
+      sessionInjection = {
+        success: false,
+        error: injectionResult?.error || "session_injection_failed",
+      };
+      // 仅记录日志，不改变 preflight 结果
+      console.error(
+        `[environmentPreflight] session injection failed: ${sessionInjection.error}`
+      );
+    }
+  }
+
   return {
     success: true,
     payload: {
@@ -361,6 +401,7 @@ export async function runEnvironmentPreflight({
       preferredDeviceUDID: preferredDeviceUDID || config?.deviceUDID || "",
       preferredMode,
       checks: selected.checks,
+      sessionInjection,
       elapsedMs: Date.now() - startedAt,
     },
     error: null,

@@ -77,6 +77,11 @@ export class HTTPBridgeClient {
     return this.#request("GET", "/debug/identity");
   }
 
+  // 将 Mac 侧真实会话 id 注入到 App；App 据此覆盖默认 "local"，identity 才能匹配
+  async setSession(sessionID) {
+    return this.#request("POST", "/debug/session", { sessionID });
+  }
+
   async #request(method, pathname, body) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
