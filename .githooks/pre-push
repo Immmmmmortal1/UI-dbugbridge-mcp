@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# pre-push hook：推送的 refs 中含新 tag（版本发布）时，推送飞书群机器人通知。
+# 仅发版（push tag）触发，普通提交不通知；通知失败不影响 push（best-effort）。
+#
+# 启用（clone 后执行一次）：git config core.hooksPath .githooks
+# 覆盖 webhook：export LOOKDEBUG_LARK_WEBHOOK=https://...（默认值见下）
+set -uo pipefail
+
+WEBHOOK_URL="${LOOKDEBUG_LARK_WEBHOOK:-https://open.feishu.cn/open-apis/bot/v2/hook/ea55fa5f-15cd-4bf0-ac9f-d0d1296a7686}"
+
+REPO_NAME="$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]##; s#\.git$##')"
+[ -n "$REPO_NAME" ] || REPO_NAME="$(basename "$(pwd)")"
+
+notify() {
+  local tag_name="$1" desc="$2" payload
+  if command -v python3 >/dev/null 2>&1; then
+    payload="$(REPO_NAME="$REPO_NAME" TAG_NAME="$tag_name" DESC="$desc" python3 -c '
+import json, os, datetime
+text = (
+    "新版本发布\n"
+    "仓库: {repo}\n"
+    "版本: {tag}\n"
+    "提交: {desc}\n"
+    "时间: {time}"
+).format(
+    repo=os.environ["REPO_NAME"],
+    tag=os.environ["TAG_NAME"],
+    desc=os.environ["DESC"],
+    time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+)
+print(json.dumps({"msg_type": "text", "content": {"text": text}}, ensure_ascii=False))
+')"
+  else
+    payload="{\"msg_type\":\"text\",\"content\":{\"text\":\"新版本发布 仓库:$REPO_NAME 版本:$tag_name 提交:$desc\"}}"
+  fi
+  if curl -s -m 8 -X POST -H 'Content-Type: application/json' -d "$payload" "$WEBHOOK_URL" >/dev/null 2>&1; then
+    echo "[pre-push] 已推送飞书通知: $REPO_NAME $tag_name"
+  else
+    echo "[pre-push] WARN: 飞书通知发送失败（不影响 push）" >&2
+  fi
+}
+
+# 读取 stdin：每行 <local ref> <local oid> <remote ref> <remote oid>
+while read -r local_ref local_oid remote_ref remote_oid; do
+  case "$remote_ref" in
+    refs/tags/*)
+      tag_name="${remote_ref#refs/tags/}"
+      desc="$(git log -1 --format='%h %s' "$local_oid" 2>/dev/null || echo "$local_oid")"
+      notify "$tag_name" "$desc"
+      ;;
+  esac
+done
+
+exit 0

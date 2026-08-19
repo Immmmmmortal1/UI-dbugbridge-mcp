@@ -349,3 +349,24 @@ node src/server.js
 ```
 
 该进程使用 newline-delimited JSON 的 stdio MCP transport，支持 `initialize`、`notifications/initialized`、`tools/list` 和 `tools/call`。
+
+## 发布与群通知
+
+打 tag 发布新版本并 push 时，`.githooks/pre-push` 会自动推送飞书群机器人通知（仅发版触发，普通提交不通知）。
+
+新 clone 后启用 hook（一次性）：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+发布流程：
+
+```bash
+# 1. bump 版本（package.json 的 version）
+# 2. commit 改动
+# 3. git tag -a <版本> -m "Release <版本>"
+# 4. git push origin main && git push origin <版本>   # 触发飞书通知
+```
+
+默认 webhook 地址内置于 `.githooks/pre-push`，可用环境变量 `LOOKDEBUG_LARK_WEBHOOK` 覆盖。
