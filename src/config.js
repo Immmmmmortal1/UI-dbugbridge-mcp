@@ -77,11 +77,11 @@ function sessionPort(sessionID) {
 }
 
 export function loadConfig(env = process.env) {
-  // BRIDGE_BASE_URL / BRIDGE_LOCAL_PORT 的默认值（127.0.0.1:37777）仅 iproxy 模式使用：
-  // - iproxy 模式：本地启动 iproxy 把设备远程端口转回 37777，MCP 访问 127.0.0.1:37777
+  // BRIDGE_BASE_URL / BRIDGE_LOCAL_PORT 的默认值（127.0.0.1:42671）仅 iproxy 模式使用：
+  // - iproxy 模式：本地启动 iproxy 把设备远程端口转回 42671，MCP 访问 127.0.0.1:42671
   // - CoreDevice 隧道模式：ensureBridgeReachable 会用 tunnelIP 覆盖 bridgeBaseURL，
   //   BRIDGE_BASE_URL / BRIDGE_LOCAL_PORT 在此模式下不生效，请勿据此探测本地端口
-  const bridgeBaseURLValue = (env.BRIDGE_BASE_URL || "http://127.0.0.1:37777").trim();
+  const bridgeBaseURLValue = (env.BRIDGE_BASE_URL || "http://127.0.0.1:42671").trim();
   const screenshotCommand = sanitizeCommand(env.LOOKDEBUG_SCREENSHOT_COMMAND || "");
   const deviceUDID = (env.LOOKDEBUG_DEVICE_UDID || "").trim();
   const iproxyPath = (env.IPROXY_PATH || "iproxy").trim();
@@ -95,15 +95,15 @@ export function loadConfig(env = process.env) {
   // URL 主机校验：非回环且未启用危险开关 → 回退到默认回环地址
   const bridgeBaseURLValueSafe = isLoopbackURL(bridgeBaseURLValue) || allowAnyURL
     ? bridgeBaseURLValue
-    : "http://127.0.0.1:37777";
+    : "http://127.0.0.1:42671";
 
   const bridgeLocalPortExplicit = Boolean(env.BRIDGE_LOCAL_PORT?.trim());
   const bridgeBaseURLExplicit = Boolean(env.BRIDGE_BASE_URL?.trim()) && bridgeBaseURLValueSafe === bridgeBaseURLValue;
   const bridgeBaseURLPortAuto = !bridgeLocalPortExplicit && !bridgeBaseURLExplicit;
   // 本地端口校验：0 表示自动分配；显式端口需在 1-65535 内，否则回退到默认（除非启用危险开关）
   const bridgeLocalPortFallback = bridgeBaseURLExplicit
-    ? readURLPort(bridgeBaseURLValueSafe, 37777)
-    : bridgeBaseURLPortAuto ? 0 : 37777;
+    ? readURLPort(bridgeBaseURLValueSafe, 42671)
+    : bridgeBaseURLPortAuto ? 0 : 42671;
   const bridgeLocalPort = readLocalPort(
     env.BRIDGE_LOCAL_PORT,
     bridgeLocalPortFallback,

@@ -170,11 +170,11 @@ startup_timeout_sec = 30.0
 
 [mcp_servers.ui_dbugbridge_mcp.env]
 # Optional: omit with BRIDGE_LOCAL_PORT for automatic per-process local ports.
-# BRIDGE_BASE_URL = "http://127.0.0.1:37777"
+# BRIDGE_BASE_URL = "http://127.0.0.1:42671"
 LOOKDEBUG_DEVICE_UDID = "<physical-device-udid>"
 IPROXY_PATH = "iproxy"
 # Optional: omit to allocate a unique local port per MCP process.
-# BRIDGE_LOCAL_PORT = "37777"
+# BRIDGE_LOCAL_PORT = "42671"
 # BRIDGE_REMOTE_PORT 必须在 42671-42770 范围内，否则回退到默认扫描
 # BRIDGE_REMOTE_PORT = "42671"
 DEV_FLOW_SESSION_ID = "<devflow-session-id>"
@@ -182,14 +182,14 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 
 ### 隧道模式 vs iproxy 模式（端口说明）
 
-`BRIDGE_BASE_URL` 和 `BRIDGE_LOCAL_PORT` 的默认值（`127.0.0.1:37777`）**仅 iproxy 模式**使用，不要据此探测本地端口：
+`BRIDGE_BASE_URL` 和 `BRIDGE_LOCAL_PORT` 的默认值（`127.0.0.1:42671`）**仅 iproxy 模式**使用，不要据此探测本地端口：
 
 | 模式 | 触发条件 | BRIDGE_BASE_URL / BRIDGE_LOCAL_PORT | 实际访问地址 |
 | --- | --- | --- | --- |
 | CoreDevice 隧道（iOS 17+ 默认） | 设备暴露 `tunnelIPAddress` | **忽略**，`ensureBridgeReachable` 会用 `tunnelIP` 覆盖 | `http://[<tunnelIP>]:<remotePort>` |
-| iproxy（旧设备回退） | 无 tunnelIP，走 `iproxy` 转发 | 生效，本地 iproxy 监听 37777 | `http://127.0.0.1:37777` |
+| iproxy（旧设备回退） | 无 tunnelIP，走 `iproxy` 转发 | 生效，本地 iproxy 监听 42671 | `http://127.0.0.1:42671` |
 
-门禁类探针**不要**直接探测 `127.0.0.1:37777`：隧道模式下该端口无监听，会误报桥不可用。请通过 MCP 工具（`ping` / `ensure_ports`）走 preflight 流程判断桥可达性。
+门禁类探针**不要**直接探测 `127.0.0.1:42671`：隧道模式下该端口无监听，会误报桥不可用。请通过 MCP 工具（`ping` / `ensure_ports`）走 preflight 流程判断桥可达性。
 
 配置项：
 

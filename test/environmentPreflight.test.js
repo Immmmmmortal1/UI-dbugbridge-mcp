@@ -5,7 +5,7 @@ import { runEnvironmentPreflight } from "../src/environmentPreflight.js";
 
 function makeDependencies(overrides = {}) {
   return {
-    config: { sessionID: "test-session", bridgeBaseURL: "http://127.0.0.1:37777" },
+    config: { sessionID: "test-session", bridgeBaseURL: "http://127.0.0.1:42671" },
     runtimeTarget: { mode: "device", deviceUDID: "device-1" },
     portForwarder: {
       ensureAll: async () => ({ success: true, payload: { forwards: [] }, error: null }),
@@ -13,7 +13,7 @@ function makeDependencies(overrides = {}) {
       stopAllAndWait: async () => {},
     },
     bridgeClient: {
-      baseURL: "http://127.0.0.1:37777",
+      baseURL: "http://127.0.0.1:42671",
       ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
       getIdentity: async () => ({
         ok: true,
@@ -61,7 +61,7 @@ test("preflight syncs the bridge client to the allocated local port", async () =
 test("preflight fails when the in-app DebugBridge is unreachable", async () => {
   const result = await runEnvironmentPreflight(makeDependencies({
     bridgeClient: {
-      baseURL: "http://127.0.0.1:37777",
+      baseURL: "http://127.0.0.1:42671",
       ping: async () => ({ ok: false, status: 503, payload: { error: "bridge_down" } }),
     },
   }));
@@ -193,7 +193,7 @@ test("default ping probes the cached remotePort first when no explicit port is g
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:37777",
+    bridgeBaseURL: "http://127.0.0.1:42671",
     portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42675 }],
     bridgeRemotePortStart: 42671,
     bridgeRemotePortEnd: 42676,
@@ -206,7 +206,7 @@ test("default ping probes the cached remotePort first when no explicit port is g
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:37777",
+    baseURL: "http://127.0.0.1:42671",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => {
       const port = dependencies.config.portForwards[0].remotePort;
@@ -240,7 +240,7 @@ test("activateBridge syncs the selected remotePort back into config.portForwards
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:37777",
+    bridgeBaseURL: "http://127.0.0.1:42671",
     portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
     bridgeRemotePortStart: 42671,
     bridgeRemotePortEnd: 42673,
@@ -253,7 +253,7 @@ test("activateBridge syncs the selected remotePort back into config.portForwards
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:37777",
+    baseURL: "http://127.0.0.1:42671",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => {
       const port = dependencies.config.portForwards[0].remotePort;
@@ -286,7 +286,7 @@ test("explicit remotePort candidates probe only that single port, ignoring cache
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:37777",
+    bridgeBaseURL: "http://127.0.0.1:42671",
     // 缓存端口 42675，但显式指定 42699 时应忽略缓存
     portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42675 }],
     bridgeRemotePortStart: 42671,
@@ -300,7 +300,7 @@ test("explicit remotePort candidates probe only that single port, ignoring cache
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:37777",
+    baseURL: "http://127.0.0.1:42671",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({
@@ -328,7 +328,7 @@ test("non-tunnel target falls through to iproxy mode even when config.tunnelIPAd
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:37777",
+    bridgeBaseURL: "http://127.0.0.1:42671",
     portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
     bridgeRemotePortExplicit: true,
     // 上一次 tunnel 激活留下的残留 tunnel IP
@@ -343,7 +343,7 @@ test("non-tunnel target falls through to iproxy mode even when config.tunnelIPAd
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:37777",
+    baseURL: "http://127.0.0.1:42671",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({
@@ -372,7 +372,7 @@ test("selected iproxy remotePort is re-ensured after full scan leaves a later po
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:37777",
+    bridgeBaseURL: "http://127.0.0.1:42671",
     portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
     bridgeRemotePortStart: 42671,
     bridgeRemotePortEnd: 42673,
@@ -385,7 +385,7 @@ test("selected iproxy remotePort is re-ensured after full scan leaves a later po
     stopAllAndWait: async () => { stopCalls.push(true); },
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:37777",
+    baseURL: "http://127.0.0.1:42671",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({
@@ -414,7 +414,7 @@ test("cached remotePort still falls back to default full range when range config
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:37777",
+    bridgeBaseURL: "http://127.0.0.1:42671",
     portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42675 }],
   };
   dependencies.portForwarder = {
@@ -425,7 +425,7 @@ test("cached remotePort still falls back to default full range when range config
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:37777",
+    baseURL: "http://127.0.0.1:42671",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({
@@ -447,7 +447,7 @@ test("selected iproxy remotePort is re-ensured when later probes fail after stop
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:37777",
+    bridgeBaseURL: "http://127.0.0.1:42671",
     portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
     bridgeRemotePortStart: 42671,
     bridgeRemotePortEnd: 42672,
@@ -462,7 +462,7 @@ test("selected iproxy remotePort is re-ensured when later probes fail after stop
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:37777",
+    baseURL: "http://127.0.0.1:42671",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => dependencies.config.portForwards[0].remotePort === 42671
       ? { ok: true, status: 200, payload: { success: true } }
@@ -489,7 +489,7 @@ test("reactivated iproxy uses the newly allocated bridgeBaseURL instead of stale
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:37777",
+    bridgeBaseURL: "http://127.0.0.1:42671",
     portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
     bridgeRemotePortStart: 42671,
     bridgeRemotePortEnd: 42672,
@@ -506,7 +506,7 @@ test("reactivated iproxy uses the newly allocated bridgeBaseURL instead of stale
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:37777",
+    baseURL: "http://127.0.0.1:42671",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({

@@ -11,7 +11,6 @@ test("config defaults to automatic local port allocation", () => {
   assert.equal(config.bridgeBaseURLPortAuto, true);
   assert.ok(config.portForwards[0].remotePort >= 42000);
   assert.ok(config.portForwards[0].remotePort < 44000);
-  assert.notEqual(config.portForwards[0].remotePort, 37777);
 });
 
 test("apps start at the first dynamic bridge port and can opt into an assigned port", () => {
@@ -31,7 +30,7 @@ test("config session id prefers Cursor conversation id before local fallback", (
 });
 
 test("explicit local port remains opt-in and is not auto-allocated", () => {
-  const config = loadConfig({ BRIDGE_BASE_URL: "http://127.0.0.1:37777", BRIDGE_LOCAL_PORT: "40000" });
+  const config = loadConfig({ BRIDGE_BASE_URL: "http://127.0.0.1:42671", BRIDGE_LOCAL_PORT: "40000" });
 
   assert.equal(config.portForwards[0].localPort, 40000);
   assert.equal(config.portForwards[0].autoAllocate, false);
