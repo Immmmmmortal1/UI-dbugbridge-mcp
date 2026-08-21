@@ -83,7 +83,10 @@ export function loadConfig(env = process.env) {
   //   BRIDGE_BASE_URL / BRIDGE_LOCAL_PORT 在此模式下不生效，请勿据此探测本地端口
   const bridgeBaseURLValue = (env.BRIDGE_BASE_URL || "http://127.0.0.1:42671").trim();
   const screenshotCommand = sanitizeCommand(env.LOOKDEBUG_SCREENSHOT_COMMAND || "");
-  const deviceUDID = (env.LOOKDEBUG_DEVICE_UDID || "").trim();
+  // Prefer the XcodeBuildMCP/CoreDevice identifier, while keeping the older
+  // UDID variable as a compatibility fallback. Runtime target resolution
+  // normalizes a CoreDevice identifier to the physical UDID when needed.
+  const deviceUDID = (env.LOOKDEBUG_DEVICE_ID || env.LOOKDEBUG_DEVICE_UDID || "").trim();
   const iproxyPath = (env.IPROXY_PATH || "iproxy").trim();
   // 危险开关：开启后允许 BRIDGE_LOCAL_PORT/BRIDGE_REMOTE_PORT 超出常规范围（默认关闭）
   const allowAnyPort = readBoolean(env.LOOKDEBUG_ALLOW_ANY_PORT);

@@ -15,7 +15,7 @@
 
 - 只发现物理设备上的 DebugBridge，不扫描 iOS Simulator，也不回退到 localhost。
 - `ensure_ports` / `ping` 会扫描真机目标的 `42671-42770`，并在结果里返回 `discovered` 列表。
-- 通过 `bundleID` / `sessionID` / `deviceUDID` / `mode=device` 选择当前激活目标。
+- 通过 `bundleID` / `sessionID` / `deviceUDID`（或 `deviceID`）/ `mode=device` 选择当前激活目标；设备选择器支持物理 UDID 和 CoreDevice ID。
 - 未指定选择器时，优先有线真机上的活桥，其次任意真机。
 - App 编译安装由 XcodeBuildMCP 负责；本仓库不激活 Xcode scheme，不发送 `Command+R`。
 - 不读取 Xcode Console，不调用 Lookin CLI。
@@ -171,7 +171,7 @@ startup_timeout_sec = 30.0
 [mcp_servers.ui_dbugbridge_mcp.env]
 # Optional: omit with BRIDGE_LOCAL_PORT for automatic per-process local ports.
 # BRIDGE_BASE_URL = "http://127.0.0.1:42671"
-LOOKDEBUG_DEVICE_UDID = "<physical-device-udid>"
+LOOKDEBUG_DEVICE_ID = "<core-device-id-or-physical-udid>"
 IPROXY_PATH = "iproxy"
 # Optional: omit to allocate a unique local port per MCP process.
 # BRIDGE_LOCAL_PORT = "42671"
@@ -196,7 +196,8 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 | 配置项 | 必须 | 说明 |
 | --- | --- | --- |
 | `BRIDGE_BASE_URL` | 否 | 默认自动生成实际本机转发地址；host 仅允许回环（127.0.0.1/localhost/::1），非回环需显式开启 `LOOKDEBUG_ALLOW_ANY_URL` |
-| `LOOKDEBUG_DEVICE_UDID` | 是 | 指定优先使用的物理设备 UDID |
+| `LOOKDEBUG_DEVICE_ID` | 否 | 指定优先使用的 XcodeBuildMCP/CoreDevice ID；也接受物理设备 UDID |
+| `LOOKDEBUG_DEVICE_UDID` | 否 | `LOOKDEBUG_DEVICE_ID` 的旧版兼容别名 |
 | `IPROXY_PATH` | 否 | 默认 `iproxy` |
 | `BRIDGE_LOCAL_PORT` | 否 | 默认自动分配本机端口；设置后固定使用指定端口（1-65535），若被其他转发占用则失败 |
 | `BRIDGE_REMOTE_PORT` | 否 | 默认扫描 `42671-42770`；设置后固定使用指定端口，必须在 42671-42770 内，否则回退到默认 |
@@ -221,7 +222,7 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 8. get_runtime_node / audit_runtime 做运行态校验
 ```
 
-`build_run_device`、`session_show_defaults` 属于 XcodeBuildMCP，不是本仓库提供的 MCP 工具。本仓库不主动切换 Xcode scheme，也不模拟 `Command+R`。设备选择遵循上方「有线第一台」规则；`LOOKDEBUG_DEVICE_UDID` 仅用于显式覆盖。
+`build_run_device`、`session_show_defaults` 属于 XcodeBuildMCP，不是本仓库提供的 MCP 工具。本仓库不主动切换 Xcode scheme，也不模拟 `Command+R`。设备选择遵循上方「有线第一台」规则；`LOOKDEBUG_DEVICE_ID`（或旧版 `LOOKDEBUG_DEVICE_UDID`）仅用于显式覆盖。
 
 ## MCP 工具契约
 
@@ -240,7 +241,7 @@ DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 
 | 工具 | 参数 | 说明 |
 | --- | --- | --- |
-| `ping` | `bundleID?`, `sessionID?`, `deviceUDID?`, `mode?`, `remotePort?` | 扫描全部目标上的活桥并激活一个 |
+| `ping` | `bundleID?`, `sessionID?`, `deviceUDID?` / `deviceID?`, `mode?`, `remotePort?` | 扫描全部目标上的活桥并激活一个 |
 | `release_session` | `exitAfterRelease?`, `reason?` | 释放本 MCP 实例的 iproxy；默认随后退出 server 进程 |
 | `ensure_ports` | 同上 | 同上；结果包含 `discovered` 多目标列表 |
 
@@ -326,7 +327,7 @@ sleep
 | --- | --- |
 | `physical_device_required` | 连接物理设备，开启开发者模式并确认 Developer Disk Image 服务可用 |
 | `physical_device_detection_failed:*` | 检查 `xcrun devicectl list devices --json-output -` 和 Xcode command line tools |
-| `missing_LOOKDEBUG_DEVICE_UDID` | 设置 `LOOKDEBUG_DEVICE_UDID` |
+| `missing_LOOKDEBUG_DEVICE_UDID` | 设置 `LOOKDEBUG_DEVICE_ID`（或旧版 `LOOKDEBUG_DEVICE_UDID`） |
 | `iproxy_not_reachable` | 检查 `iproxy` 路径、设备 UDID 和端口占用 |
 | `debug_bridge_ping_failed` | 确认 App 已启动 DebugBridge 且 `BRIDGE_BASE_URL` 正确 |
 | `release_session` | dev-flow commit 完成后调用，释放本 MCP 实例的 iproxy 并退出进程 |

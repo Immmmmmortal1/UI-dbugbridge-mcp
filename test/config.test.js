@@ -22,6 +22,15 @@ test("apps start at the first dynamic bridge port and can opt into an assigned p
   assert.equal(loadConfig({ BRIDGE_REMOTE_PORT: "42672" }).portForwards[0].remotePort, 42672);
 });
 
+test("CoreDevice ID is the preferred device selector with UDID compatibility", () => {
+  assert.equal(loadConfig({ LOOKDEBUG_DEVICE_ID: "core-device-1" }).deviceUDID, "core-device-1");
+  assert.equal(loadConfig({ LOOKDEBUG_DEVICE_UDID: "legacy-udid" }).deviceUDID, "legacy-udid");
+  assert.equal(
+    loadConfig({ LOOKDEBUG_DEVICE_ID: "core-device-1", LOOKDEBUG_DEVICE_UDID: "legacy-udid" }).deviceUDID,
+    "core-device-1"
+  );
+});
+
 test("config session id prefers Cursor conversation id before local fallback", () => {
   const config = loadConfig({
     CURSOR_CONVERSATION_ID: "bd225fc5-4f36-47e2-876e-8d9d125033a1",

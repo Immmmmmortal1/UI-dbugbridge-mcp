@@ -40,6 +40,21 @@ const runtimeTargetResolver = new RuntimeTargetResolver();
 const DEFAULT_PAGE_TIMEOUT_MS = 8000;
 const DEFAULT_PAGE_INTERVAL_MS = 300;
 const DEFAULT_POST_ACTION_WAIT_MS = 350;
+
+function normalizeDeviceSelector(selector, targets) {
+  const normalized = String(selector || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const matchingTarget = (targets || []).find((target) => (
+    target?.deviceUDID === normalized
+    || target?.device?.deviceUDID === normalized
+    || target?.device?.coreDeviceID === normalized
+  ));
+  return matchingTarget?.deviceUDID || normalized;
+}
+
 const tools = [
   {
     name: "ping",
@@ -61,7 +76,11 @@ const tools = [
         },
         deviceUDID: {
           type: "string",
-          description: "Optional physical device UDID used as a preference when multiple bridges match.",
+          description: "Optional physical device UDID or CoreDevice ID used as a preference when multiple bridges match.",
+        },
+        deviceID: {
+          type: "string",
+          description: "Alias for deviceUDID; accepts an XcodeBuildMCP/CoreDevice ID.",
         },
         mode: {
           type: "string",
@@ -118,7 +137,11 @@ const tools = [
         },
         deviceUDID: {
           type: "string",
-          description: "Optional physical device UDID used as a preference when multiple bridges match.",
+          description: "Optional physical device UDID or CoreDevice ID used as a preference when multiple bridges match.",
+        },
+        deviceID: {
+          type: "string",
+          description: "Alias for deviceUDID; accepts an XcodeBuildMCP/CoreDevice ID.",
         },
         mode: {
           type: "string",
@@ -1237,14 +1260,20 @@ async function dispatchToolInner(name, args) {
   }
 
   const preferredMode = requestedRuntimeMode(args);
-  const preferredDeviceUDID = String(args?.deviceUDID || "").trim();
-  // 严格匹配生效条件：请求参数显式传了 deviceUDID，或环境变量 LOOKDEBUG_DEVICE_UDID 配置了 deviceUDID
-  // 配置来源的 deviceUDID 也作为强制目标：无匹配活桥 → 直接失败，不静默回退到其他设备
-  // 注意：必须在 applyRuntimeTarget 覆盖 config.deviceUDID 之前读取
-  const configuredDeviceUDID = String(config.deviceUDID || "").trim();
-  const strictDeviceUDID = preferredDeviceUDID.length > 0 || configuredDeviceUDID.length > 0;
-  // 合并请求参数和环境变量的 deviceUDID：请求参数优先，否则用配置值
-  // 这样 selectLiveBridge 的 preferredUDID 能匹配到配置的设备（applyRuntimeTarget 后 config.deviceUDID 已被覆盖）
+  const preferredDeviceSelector = String(args?.deviceID || args?.deviceUDID || "").trim();
+  // Strict matching applies when a request selector or LOOKDEBUG_DEVICE_ID /
+  // LOOKDEBUG_DEVICE_UDID is configured. Resolve CoreDevice IDs to physical
+  // UDIDs before iproxy/preflight so both backends use one canonical selector.
+  const configuredDeviceSelector = String(config.deviceUDID || "").trim();
+  const preferredDeviceUDID = normalizeDeviceSelector(preferredDeviceSelector, deviceTargets);
+  const configuredDeviceUDID = normalizeDeviceSelector(configuredDeviceSelector, deviceTargets);
+  const strictDeviceUDID = preferredDeviceSelector.length > 0 || configuredDeviceSelector.length > 0;
+  // Keep the normalized configured device on the mutable config object. This
+  // is required for legacy iproxy fallback, which accepts a physical UDID.
+  if (configuredDeviceUDID && configuredDeviceUDID !== configuredDeviceSelector) {
+    config.deviceUDID = configuredDeviceUDID;
+  }
+  // Request selector wins; otherwise use the normalized environment selector.
   const effectivePreferredDeviceUDID = preferredDeviceUDID || configuredDeviceUDID;
   const defaultTarget = deviceTargets[0];
   applyRuntimeTarget(config, defaultTarget);
