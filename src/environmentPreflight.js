@@ -47,10 +47,17 @@ function candidatePorts(config, remotePortCandidates) {
   if (config?.bridgeRemotePortExplicit) {
     return [config.portForwards[0].remotePort];
   }
+  // 默认扫描：优先复用上一次成功激活的 remotePort（缓存于 portForwards[0].remotePort），
+  // 避免默认 ping 误走旧 legacy 转发路径；然后再扫描 42671-42770，去重保持缓存端口为第一候选
   const configuredPort = config?.portForwards?.[0]?.remotePort;
-  const start = config?.bridgeRemotePortStart ?? configuredPort ?? 42671;
-  const end = config?.bridgeRemotePortEnd ?? start;
-  return Array.from({ length: Math.max(1, end - start + 1) }, (_, index) => start + index);
+  const start = config?.bridgeRemotePortStart ?? 42671;
+  const end = config?.bridgeRemotePortEnd ?? 42770;
+  const range = Array.from({ length: Math.max(1, end - start + 1) }, (_, index) => start + index);
+  if (!Number.isInteger(configuredPort) || configuredPort === start) {
+    return range;
+  }
+  // 缓存端口前置（去重），保证默认 ping 优先探测上一次成功端口
+  return [configuredPort, ...range.filter((port) => port !== configuredPort)];
 }
 
 function bridgeURLForHost(host, port) {
@@ -125,10 +132,12 @@ async function ensureBridgeReachable({
   runtimeTarget,
   remotePort,
 }) {
+  // 仅使用当前 runtimeTarget 的 tunnelIPAddress，不复用 config.tunnelIPAddress
+  // （可能为上一次激活的残留），避免 CoreDevice tunnel 模式下误用旧 tunnel IP
+  // 或 legacy iproxy local port 状态
   const tunnelIP =
     runtimeTarget?.device?.tunnelIPAddress
     || runtimeTarget?.host
-    || config?.tunnelIPAddress
     || null;
 
   // iOS 17+ / CoreDevice: usbmux iproxy often sees zero devices. Prefer the
@@ -182,11 +191,13 @@ async function probeTargetPorts({
   const candidates = candidatePorts(config, remotePortCandidates);
   const live = [];
   let lastFailure = null;
+  let currentForwardRemotePort = null;
 
   for (const [index, remotePort] of candidates.entries()) {
     if (index > 0) {
       // 扫描下一个端口前，等待+SIGKILL 清理上一个 iproxy，避免僵尸进程占用端口
       await portForwarder.stopAllAndWait?.();
+      currentForwardRemotePort = null;
     }
     config.portForwards[0].remotePort = remotePort;
 
@@ -197,6 +208,9 @@ async function probeTargetPorts({
       runtimeTarget,
       remotePort,
     });
+    if (portForwardCheck.success && !portForwardCheck.payload?.mode) {
+      currentForwardRemotePort = remotePort;
+    }
 
     const bridgePing = portForwardCheck.success
       ? await captureResult(() => bridgeClient.ping())
@@ -239,13 +253,16 @@ async function probeTargetPorts({
       identity,
       sessionInjection,
       checks: [portForwardCheck, bridgeCheck],
+      get needsReactivation() {
+        return currentForwardRemotePort !== remotePort;
+      },
     });
   }
 
   return { live, lastFailure, remotePortCandidates: candidates };
 }
 
-function activateBridge({ config, bridgeClient, selected }) {
+async function activateBridge({ config, portForwarder, bridgeClient, selected }) {
   config.bridgeBaseURL = selected.bridgeBaseURL;
   config.runtimeTarget = selected.runtimeTarget;
   config.tunnelIPAddress = selected.runtimeTarget?.device?.tunnelIPAddress
@@ -253,6 +270,23 @@ function activateBridge({ config, bridgeClient, selected }) {
     || null;
   if (selected.runtimeTarget?.mode === "device" && selected.runtimeTarget.deviceUDID) {
     config.deviceUDID = selected.runtimeTarget.deviceUDID;
+  }
+  // 同步选中端口的 remotePort 回 config，避免后续流程残留旧 42770/legacy 端口
+  // - tunnel 模式：仅同步 remotePort，不触碰 localPort（iproxy/local port 状态在 tunnel 模式下无效）
+  // - iproxy 模式：remotePort 同步保证后续 ensureAll 用对端口
+  if (Array.isArray(config.portForwards) && config.portForwards[0]) {
+    config.portForwards[0].remotePort = selected.remotePort;
+  }
+  if (selected.needsReactivation && !selected.checks?.[0]?.payload?.mode && selected.runtimeTarget?.mode === "device") {
+    await portForwarder.stopAllAndWait?.();
+    await ensureBridgeReachable({
+      config,
+      portForwarder,
+      bridgeClient,
+      runtimeTarget: selected.runtimeTarget,
+      remotePort: selected.remotePort,
+    });
+    selected.bridgeBaseURL = config.bridgeBaseURL;
   }
   if (typeof bridgeClient.setBaseURL === "function") {
     bridgeClient.setBaseURL(selected.bridgeBaseURL);
@@ -364,7 +398,7 @@ export async function runEnvironmentPreflight({
     };
   }
 
-  activateBridge({ config, bridgeClient, selected });
+  await activateBridge({ config, portForwarder, bridgeClient, selected });
 
   // 会话 id 注入：把 Mac 侧真实 sessionID 推给 App，App 的 identity 才能返回正确值
   // - 仅当存在真实会话 id（非 "local"）时才注入；App 默认即 "local"，注入无意义
