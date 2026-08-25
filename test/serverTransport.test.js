@@ -48,7 +48,7 @@ test("stdio transport accepts and returns newline-delimited MCP messages", async
   const response = await readJSONLine(server.stdout);
   assert.equal(response.id, 1);
   assert.equal(response.result.serverInfo.name, "lookdebug-mcp");
-  assert.equal(response.result.serverInfo.version, "0.1.13");
+  assert.equal(response.result.serverInfo.version, "0.1.12");
 });
 
 test("tools list includes text entry tools", async (t) => {
