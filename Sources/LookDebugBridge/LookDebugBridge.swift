@@ -40,6 +40,12 @@ public final class LookDebugBridge {
         return "local"
     }())
 
+
+    /// 当前 App bundle ID，用于 Mac 侧确认连到目标 App
+    public nonisolated static var bundleID: String {
+        Bundle.main.bundleIdentifier ?? "unknown"
+    }
+
     /// 当前会话 ID（线程安全，可被运行时注入）
     /// - 初始值见 sessionBox：环境变量 DEV_FLOW_SESSION_ID / CODEX_THREAD_ID / CURSOR_CONVERSATION_ID
     /// - Mac 侧 MCP 通过 POST /debug/session 在确认桥后注入真实会话 id（修复真机 sessionID 恒为 local 的问题）
