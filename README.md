@@ -14,12 +14,24 @@
 ## 当前运行约束
 
 - 只发现物理设备上的 DebugBridge，不扫描 iOS Simulator，也不回退到 localhost。
-- `ensure_ports` / `ping` 会扫描真机目标的 `42671-42770`，并在结果里返回 `discovered` 列表。
+- `ensure_ports` / `ping` 默认探测真机目标的 App 端口 `37777`（与 Pod 默认值对齐），并在结果里返回 `discovered` 列表。
 - 通过 `bundleID` / `sessionID` / `deviceUDID`（或 `deviceID`）/ `mode=device` 选择当前激活目标；设备选择器支持物理 UDID 和 CoreDevice ID。
 - 未指定选择器时，优先有线真机上的活桥，其次任意真机。
 - App 编译安装由 XcodeBuildMCP 负责；本仓库不激活 Xcode scheme，不发送 `Command+R`。
 - 不读取 Xcode Console，不调用 Lookin CLI。
 - 真机优先走 CoreDevice tunnel；旧设备回退 `iproxy`。
+
+## 端口与会话语义
+
+| 维度 | 默认行为 | 说明 |
+| --- | --- | --- |
+| 远端 App 端口 | `37777` | 与 Pod 默认值对齐，同一真机/同一 App 只暴露一个端口；连续会话直接复用，不靠多端口隔离 |
+| CoreDevice 直连 | `http://[<tunnelIP>]:37777` | iOS 17+ 默认走 CoreDevice tunnel，MCP 直接访问 tunnelIP:37777，`BRIDGE_BASE_URL` / `BRIDGE_LOCAL_PORT` 在此模式下忽略 |
+| iproxy 回退 | `iproxy <localPort>:37777` | 旧设备无 tunnelIP 时回退 iproxy；`localPort` 由 Mac 侧动态分配，远端始终 `37777` |
+| `sessionID` | 上下文标记，非并发隔离 | 默认（未传 `args.sessionID`）不按 sessionID 过滤；自动 `POST /debug/session` 仅把 Mac 侧真实会话 id 注入 App，用于日志/identity 匹配；显式工具参数 `sessionID` 优先于 MCP 环境 sessionID 用于目标匹配与注入 |
+| 连续会话 release | 下个会话可重连 | App 侧 `37777` 端口在 NWListener 上 `allowLocalEndpointReuse`，session A release 后 session B 可重新 ping 同一端口 |
+
+若两个 MCP 会话并发控制同一 App，当前**没有** ownership/lease 机制保护，仍可能互相覆盖 `sessionID`。仅适合"连续会话"（同一时刻只有一个活跃会话）场景。
 
 ## App 侧接入
 
@@ -33,7 +45,7 @@ target 'YourApp' do
 
   pod 'LookDebugBridge',
       :git => 'git@github.com:Immmmmmortal1/LookDebugBridgeService.git',
-      :tag => '0.1.7',
+      :tag => '0.1.12',
       :configurations => ['Debug']
 end
 ```
@@ -63,6 +75,8 @@ Bridge 启动后提供：
 | HTTP 接口 | 用途 |
 | --- | --- |
 | `GET /ping` | 检查 Bridge 是否可用 |
+| `GET /debug/identity` | 只读 bundleID / sessionID / port；Mac 侧 preflight 据此校验目标 App |
+| `POST /debug/session` | 运行时注入 sessionID（上下文标记，非并发隔离）；覆盖式写入，幂等可重入 |
 | `GET /debug/page` | 读取当前语义页面和注册元素 |
 | `GET /debug/windows` | 读取当前 UIWindow/UIView 树 |
 | `POST /debug/runtime/node` | 按 accessibility anchor 读取运行态节点 |
@@ -71,6 +85,8 @@ Bridge 启动后提供：
 | `POST /debug/text/set` | 替换 UITextField/UITextView 文本 |
 | `POST /debug/text/type` | 追加 UITextField/UITextView 文本 |
 | `GET /debug/logs` | 查询或等待当前 App 进程的日志 |
+
+> `/debug/identity` 与 `/debug/session` 中的 `sessionID` 是上下文标记（用于日志、identity 匹配），不代表真正并发隔离。两个 MCP 会话并发控制同一 App 仍需后续 ownership/lease 机制。
 
 ### 日志接入
 
@@ -94,8 +110,8 @@ LovOnDebugLog.error("request failed", category: "api")
 - 不使用 cursor、offset 或读取位置；
 - `read_app_logs` 直接检索当前进程已经产生的完整日志池，默认返回最近 500 条，最多 5000 条；
 - `wait_app_logs` 只等待本次请求开始后产生的、符合条件的新日志，最多等待 120 秒；
-- `sessionID` 是 App 本次进程生成的调试会话标识，不是文件目录，也不是日志游标；
-- `DEV_FLOW_SESSION_ID` 是 DevFlow/MCP 上下文标识，两者用途不同。
+- `sessionID` 是 App 本次进程生成的调试会话标识（上下文标记，不是文件目录，也不是日志游标，不作为并发隔离依据）；
+- `DEV_FLOW_SESSION_ID` 是 DevFlow/MCP 上下文标识，作为上下文标记通过 `POST /debug/session` 注入 App（用于日志/identity），两者用途不同但语义都是上下文标记。
 
 日志返回结构：
 
@@ -169,39 +185,39 @@ args = ["/absolute/path/UI-dbugbridge-mcp/src/server.js"]
 startup_timeout_sec = 30.0
 
 [mcp_servers.ui_dbugbridge_mcp.env]
-# Optional: omit with BRIDGE_LOCAL_PORT for automatic per-process local ports.
-# BRIDGE_BASE_URL = "http://127.0.0.1:42671"
+# 默认不设置 BRIDGE_BASE_URL / BRIDGE_LOCAL_PORT：iproxy 模式下 localPort 动态分配，
+# CoreDevice 隧道模式下 ensureBridgeReachable 用 tunnelIP 覆盖；二者均不需要固定本地端口
 LOOKDEBUG_DEVICE_ID = "<core-device-id-or-physical-udid>"
 IPROXY_PATH = "iproxy"
-# Optional: omit to allocate a unique local port per MCP process.
-# BRIDGE_LOCAL_PORT = "42671"
-# BRIDGE_REMOTE_PORT 必须在 42671-42770 范围内，否则回退到默认扫描
-# BRIDGE_REMOTE_PORT = "42671"
+# 远端 App 端口默认 37777（与 Pod 对齐）；1-65535，否则回退到 37777
+# BRIDGE_REMOTE_PORT = "37777"
 DEV_FLOW_SESSION_ID = "<devflow-session-id>"
 ```
 
+> `DEV_FLOW_SESSION_ID` 只作为上下文标记写入 App（通过 `POST /debug/session`），用于日志/identity 匹配，不作为并发隔离依据。同一时刻多个 MCP 会话并发控制同一 App 仍需后续 ownership/lease。
+
 ### 隧道模式 vs iproxy 模式（端口说明）
 
-`BRIDGE_BASE_URL` 和 `BRIDGE_LOCAL_PORT` 的默认值（`127.0.0.1:42671`）**仅 iproxy 模式**使用，不要据此探测本地端口：
+默认省略 `BRIDGE_BASE_URL` / `BRIDGE_LOCAL_PORT`：iproxy 模式下 `localPort` 动态分配，CoreDevice 隧道模式下用 `tunnelIP` 覆盖，二者均不需要固定本地端口：
 
 | 模式 | 触发条件 | BRIDGE_BASE_URL / BRIDGE_LOCAL_PORT | 实际访问地址 |
 | --- | --- | --- | --- |
-| CoreDevice 隧道（iOS 17+ 默认） | 设备暴露 `tunnelIPAddress` | **忽略**，`ensureBridgeReachable` 会用 `tunnelIP` 覆盖 | `http://[<tunnelIP>]:<remotePort>` |
-| iproxy（旧设备回退） | 无 tunnelIP，走 `iproxy` 转发 | 生效，本地 iproxy 监听 42671 | `http://127.0.0.1:42671` |
+| CoreDevice 隧道（iOS 17+ 默认） | 设备暴露 `tunnelIPAddress` | **忽略**，`ensureBridgeReachable` 会用 `tunnelIP` 覆盖 | `http://[<tunnelIP>]:37777` |
+| iproxy（旧设备回退） | 无 tunnelIP，走 `iproxy` 转发 | 默认省略；如显式设置则在 iproxy 模式生效，否则动态分配本地端口转回设备 37777 | `http://127.0.0.1:<localPort>` |
 
-门禁类探针**不要**直接探测 `127.0.0.1:42671`：隧道模式下该端口无监听，会误报桥不可用。请通过 MCP 工具（`ping` / `ensure_ports`）走 preflight 流程判断桥可达性。
+门禁类探针**不要**直接探测 `127.0.0.1:37777`：隧道模式下该端口无监听，会误报桥不可用。请通过 MCP 工具（`ping` / `ensure_ports`）走 preflight 流程判断桥可达性。
 
 配置项：
 
 | 配置项 | 必须 | 说明 |
 | --- | --- | --- |
-| `BRIDGE_BASE_URL` | 否 | 默认自动生成实际本机转发地址；host 仅允许回环（127.0.0.1/localhost/::1），非回环需显式开启 `LOOKDEBUG_ALLOW_ANY_URL` |
+| `BRIDGE_BASE_URL` | 否 | 默认省略；省略时 iproxy 模式下动态生成实际本机转发地址，CoreDevice 隧道模式用 tunnelIP 覆盖。如显式设置：host 仅允许回环（127.0.0.1/localhost/::1），非回环需显式开启 `LOOKDEBUG_ALLOW_ANY_URL` |
 | `LOOKDEBUG_DEVICE_ID` | 否 | 指定优先使用的 XcodeBuildMCP/CoreDevice ID；也接受物理设备 UDID |
 | `LOOKDEBUG_DEVICE_UDID` | 否 | `LOOKDEBUG_DEVICE_ID` 的旧版兼容别名 |
 | `IPROXY_PATH` | 否 | 默认 `iproxy` |
-| `BRIDGE_LOCAL_PORT` | 否 | 默认自动分配本机端口；设置后固定使用指定端口（1-65535），若被其他转发占用则失败 |
-| `BRIDGE_REMOTE_PORT` | 否 | 默认扫描 `42671-42770`；设置后固定使用指定端口，必须在 42671-42770 内，否则回退到默认 |
-| `DEV_FLOW_SESSION_ID` | 否 | DevFlow 上下文标识，只用于运行上下文回传；未设置时回退 `CODEX_THREAD_ID`、`CURSOR_CONVERSATION_ID` |
+| `BRIDGE_LOCAL_PORT` | 否 | 默认省略，由 iproxy 模式动态分配本机端口；显式设置后固定使用指定端口（1-65535），若被其他转发占用则失败。仅 iproxy 模式生效，CoreDevice 隧道模式忽略 |
+| `BRIDGE_REMOTE_PORT` | 否 | 默认 `37777`（与 Pod 默认值对齐）；显式设置后固定使用指定端口，必须 1-65535，否则回退到 `37777` |
+| `DEV_FLOW_SESSION_ID` | 否 | DevFlow 上下文标识，作为上下文标记通过 `POST /debug/session` 注入 App（用于日志/identity），不作为并发隔离依据；未设置时回退 `CODEX_THREAD_ID`、`CURSOR_CONVERSATION_ID` |
 | `LOOKDEBUG_SCREENSHOT_COMMAND` | 否 | 外部截图命令；使用 `{output}` 作为输出文件占位符（占位符替换后做 shell 转义，防止注入） |
 | `LOOKDEBUG_ARTIFACT_ROOT` | 否 | artifact 根目录，设置后 `audit_runtime` 的输入/输出路径必须位于其内；未设置时写操作默认拒绝 |
 | `LOOKDEBUG_ALLOW_ANY_PORT` | 否 | 危险开关，默认关闭。开启后允许 `BRIDGE_LOCAL_PORT`/`BRIDGE_REMOTE_PORT` 超出常规范围 |
@@ -353,6 +369,23 @@ node src/server.js
 
 ## 发布与群通知
 
+### MCP 更新后的 Bridge 版本门禁
+
+每次更新 MCP 代码或准备发布前，必须主动检查以下版本是否同步：
+
+- `package.json` 的 MCP 版本
+- `LookDebugBridge.podspec` 的 Pod 版本
+- 独立 `LookDebugBridgeService` 仓库的最新稳定 tag
+- README 中示例 Pod 的 tag
+
+执行联网校验：
+
+```bash
+npm run check:bridge-version
+```
+
+校验无法访问远端或任一版本不一致时会以非零状态退出，禁止继续发布。仅检查本地文件一致性时可使用 `npm run check:bridge-version:offline`。
+
 打 tag 发布新版本并 push 时，`.githooks/pre-push` 会自动推送飞书群机器人通知（仅发版触发，普通提交不通知）。
 
 新 clone 后启用 hook（一次性）：
@@ -365,9 +398,10 @@ git config core.hooksPath .githooks
 
 ```bash
 # 1. bump 版本（package.json 的 version）
-# 2. commit 改动
-# 3. git tag -a <版本> -m "Release <版本>"
-# 4. git push origin main && git push origin <版本>   # 触发飞书通知
+# 2. npm run release:check
+# 3. commit 改动
+# 4. git tag -a <版本> -m "Release <版本>"
+# 5. git push origin main && git push origin <版本>   # 触发飞书通知
 ```
 
 默认 webhook 地址内置于 `.githooks/pre-push`，可用环境变量 `LOOKDEBUG_LARK_WEBHOOK` 覆盖。

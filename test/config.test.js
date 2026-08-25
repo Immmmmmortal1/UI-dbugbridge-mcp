@@ -9,16 +9,17 @@ test("config defaults to automatic local port allocation", () => {
   assert.equal(config.portForwards[0].localPort, 0);
   assert.equal(config.portForwards[0].autoAllocate, true);
   assert.equal(config.bridgeBaseURLPortAuto, true);
-  assert.ok(config.portForwards[0].remotePort >= 42000);
-  assert.ok(config.portForwards[0].remotePort < 44000);
+  // 默认远程端口与 Pod 对齐为 37777，不再扫描 42671-42770
+  assert.equal(config.portForwards[0].remotePort, 37777);
 });
 
-test("apps start at the first dynamic bridge port and can opt into an assigned port", () => {
+test("apps default to the Pod-aligned bridge port and can opt into an assigned port", () => {
   const first = loadConfig({ LOOKDEBUG_DEVICE_UDID: "device-1" });
   const second = loadConfig({ LOOKDEBUG_DEVICE_UDID: "device-2", DEV_FLOW_SESSION_ID: "other-task" });
 
-  assert.equal(first.portForwards[0].remotePort, 42671);
-  assert.equal(second.portForwards[0].remotePort, 42671);
+  // 连续会话/不同设备共用同一真机端口 37777，不再按 session 分配不同端口段
+  assert.equal(first.portForwards[0].remotePort, 37777);
+  assert.equal(second.portForwards[0].remotePort, 37777);
   assert.equal(loadConfig({ BRIDGE_REMOTE_PORT: "42672" }).portForwards[0].remotePort, 42672);
 });
 
@@ -39,7 +40,7 @@ test("config session id prefers Cursor conversation id before local fallback", (
 });
 
 test("explicit local port remains opt-in and is not auto-allocated", () => {
-  const config = loadConfig({ BRIDGE_BASE_URL: "http://127.0.0.1:42671", BRIDGE_LOCAL_PORT: "40000" });
+  const config = loadConfig({ BRIDGE_BASE_URL: "http://127.0.0.1:37777", BRIDGE_LOCAL_PORT: "40000" });
 
   assert.equal(config.portForwards[0].localPort, 40000);
   assert.equal(config.portForwards[0].autoAllocate, false);

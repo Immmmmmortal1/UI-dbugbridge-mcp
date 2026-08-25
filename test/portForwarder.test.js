@@ -25,13 +25,13 @@ function makeConfig({ deviceUDID = "device-1", localPort = 0, autoAllocate = tru
     deviceUDID,
     iproxyPath: "iproxy",
     cwd: process.cwd(),
-    bridgeBaseURL: "http://127.0.0.1:42671",
+    bridgeBaseURL: "http://127.0.0.1:37777",
     bridgeBaseURLPortAuto: true,
     portForwards: [{
       name: "debug_bridge",
       localPort,
       autoAllocate,
-      remotePort: 42671,
+      remotePort: 37777,
     }],
   };
 }
@@ -78,15 +78,15 @@ test("auto allocation gives separate local ports to separate device sessions", a
   assert.equal(firstResult.success, true);
   assert.equal(secondResult.success, true);
   assert.notEqual(firstResult.payload.forwards[0].localPort, secondResult.payload.forwards[0].localPort);
-  assert.deepEqual(firstSpawn.calls[0].args, ["-u", "device-1", "41001:42671"]);
-  assert.deepEqual(secondSpawn.calls[0].args, ["-u", "device-2", "41002:42671"]);
+  assert.deepEqual(firstSpawn.calls[0].args, ["-u", "device-1", "41001:37777"]);
+  assert.deepEqual(secondSpawn.calls[0].args, ["-u", "device-2", "41002:37777"]);
   assert.equal(firstConfig.bridgeBaseURL, "http://127.0.0.1:41001");
 });
 
 test("a loopback base URL without an explicit local port is rewritten to the allocated port", async () => {
   const recorder = makeSpawnRecorder();
   const config = makeConfig();
-  config.bridgeBaseURL = "http://localhost:42671";
+  config.bridgeBaseURL = "http://localhost:37777";
   const forwarder = new PortForwarder(config, {
     ...recorder,
     findFreePortImpl: async () => 41005,
@@ -100,7 +100,7 @@ test("a loopback base URL without an explicit local port is rewritten to the all
 
 test("an open explicit port without an owned child is rejected", async () => {
   const recorder = makeSpawnRecorder();
-  const forwarder = new PortForwarder(makeConfig({ localPort: 42671, autoAllocate: false }), {
+  const forwarder = new PortForwarder(makeConfig({ localPort: 37777, autoAllocate: false }), {
     ...recorder,
     connectImpl: async () => true,
   });

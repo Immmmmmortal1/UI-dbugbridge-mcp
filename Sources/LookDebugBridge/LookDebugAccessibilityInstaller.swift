@@ -19,7 +19,6 @@ enum LookDebugAccessibilityInstaller {
         method_exchangeImplementations(original, replacement)
     }
 }
-
 private enum LookDebugAccessibilityIdentifier {
     static func assign(for viewController: UIViewController) {
         let page = normalize(String(describing: type(of: viewController)))

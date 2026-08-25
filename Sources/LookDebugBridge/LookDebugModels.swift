@@ -8,7 +8,6 @@ public enum LookDebugElementType: String, Codable, Equatable {
     case label
     case view
 }
-
 struct LookDebugElementMetadata: Codable, Equatable {
     let id: String
     let type: LookDebugElementType
@@ -26,6 +25,8 @@ struct LookDebugPingResponse: Codable, Equatable {
     let ok: Bool
 }
 
+/// /debug/identity 响应：用于 Mac 侧 preflight 校验目标 App 是否匹配预期
+/// sessionID 是上下文标记（POST /debug/session 注入），不是并发隔离依据
 struct LookDebugIdentityResponse: Codable, Equatable {
     let ok: Bool
     let bundleID: String
@@ -65,6 +66,19 @@ struct LookDebugTextResponse: Codable, Equatable {
     let id: String?
     let text: String?
     let error: String?
+    /// secure 字段时不回显明文，仅返回长度（兼容字段，旧调用方可忽略）
+    let length: Int?
+    /// secure 字段时为 true，标识响应已脱敏
+    let redacted: Bool?
+
+    init(success: Bool, id: String?, text: String?, error: String?, length: Int? = nil, redacted: Bool? = nil) {
+        self.success = success
+        self.id = id
+        self.text = text
+        self.error = error
+        self.length = length
+        self.redacted = redacted
+    }
 }
 
 struct LookDebugRuntimeNodeRequest: Codable, Equatable {
@@ -180,6 +194,15 @@ struct LookDebugWindowTreeResponse: Codable, Equatable {
 struct LookDebugErrorResponse: Codable, Equatable {
     let success: Bool
     let error: String
+}
+
+struct LookDebugSessionRequest: Codable, Equatable {
+    let sessionID: String
+}
+
+struct LookDebugSessionResponse: Codable, Equatable {
+    let success: Bool
+    let sessionID: String
 }
 
 struct LookDebugHTTPResponse: Equatable {

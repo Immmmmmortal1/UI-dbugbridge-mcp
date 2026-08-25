@@ -47,17 +47,10 @@ function candidatePorts(config, remotePortCandidates) {
   if (config?.bridgeRemotePortExplicit) {
     return [config.portForwards[0].remotePort];
   }
-  // 默认扫描：优先复用上一次成功激活的 remotePort（缓存于 portForwards[0].remotePort），
-  // 避免默认 ping 误走旧 legacy 转发路径；然后再扫描 42671-42770，去重保持缓存端口为第一候选
-  const configuredPort = config?.portForwards?.[0]?.remotePort;
-  const start = config?.bridgeRemotePortStart ?? 42671;
-  const end = config?.bridgeRemotePortEnd ?? 42770;
-  const range = Array.from({ length: Math.max(1, end - start + 1) }, (_, index) => start + index);
-  if (!Number.isInteger(configuredPort) || configuredPort === start) {
-    return range;
-  }
-  // 缓存端口前置（去重），保证默认 ping 优先探测上一次成功端口
-  return [configuredPort, ...range.filter((port) => port !== configuredPort)];
+  // 默认探测：App 侧只暴露一个端口（默认 37777），不再扫描端口段。
+  // 连续会话复用同一端口：session A release 后 session B 直接 ping 同一端口即可。
+  const configuredPort = config?.portForwards?.[0]?.remotePort ?? 37777;
+  return [configuredPort];
 }
 
 function bridgeURLForHost(host, port) {
@@ -183,9 +176,10 @@ async function probeTargetPorts({
   bridgeClient,
   runtimeTarget,
   remotePortCandidates,
+  expectedIdentity = null,
 }) {
   if (!Array.isArray(config.portForwards) || !config.portForwards[0]) {
-    config.portForwards = [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }];
+    config.portForwards = [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 37777 }];
   }
 
   const candidates = candidatePorts(config, remotePortCandidates);
@@ -225,9 +219,11 @@ async function probeTargetPorts({
     // App 首次启动（devicectl launch 不注入环境变量）identity.sessionID 恒为 "local"，
     // 若先读 identity 再注入，selectLiveBridge 用真实 sessionID 匹配会因 local 失败而选不到桥（死锁）。
     // 先注入真实会话 id，identity 才能返回正确 sessionID 供匹配。
+    // 显式 expectedIdentity.sessionID 优先于 config.sessionID：否则会把 MCP 环境 sessionID
+    // 推给 App 覆盖显式选择，导致 identity 匹配失败（复审 P1 修复）。
     // 失败不阻断探测（仍按原 identity 记录），仅记录 warning。
     let sessionInjection = null;
-    const probeSessionID = config?.sessionID;
+    const probeSessionID = expectedIdentity?.sessionID || config?.sessionID;
     if (probeSessionID && probeSessionID !== "local" && typeof bridgeClient.setSession === "function") {
       const injection = await captureResult(() => bridgeClient.setSession(probeSessionID));
       sessionInjection = (injection?.ok && injection.payload)
@@ -271,7 +267,7 @@ async function activateBridge({ config, portForwarder, bridgeClient, selected })
   if (selected.runtimeTarget?.mode === "device" && selected.runtimeTarget.deviceUDID) {
     config.deviceUDID = selected.runtimeTarget.deviceUDID;
   }
-  // 同步选中端口的 remotePort 回 config，避免后续流程残留旧 42770/legacy 端口
+  // 同步选中端口的 remotePort 回 config，避免后续流程残留旧 legacy 端口
   // - tunnel 模式：仅同步 remotePort，不触碰 localPort（iproxy/local port 状态在 tunnel 模式下无效）
   // - iproxy 模式：remotePort 同步保证后续 ensureAll 用对端口
   if (Array.isArray(config.portForwards) && config.portForwards[0]) {
@@ -342,6 +338,7 @@ export async function runEnvironmentPreflight({
       bridgeClient,
       runtimeTarget: target,
       remotePortCandidates,
+      expectedIdentity,
     });
     scannedPorts = probed.remotePortCandidates;
     liveBridges.push(...probed.live);
@@ -402,9 +399,11 @@ export async function runEnvironmentPreflight({
 
   // 会话 id 注入：把 Mac 侧真实 sessionID 推给 App，App 的 identity 才能返回正确值
   // - 仅当存在真实会话 id（非 "local"）时才注入；App 默认即 "local"，注入无意义
+  // - 显式 expectedIdentity.sessionID 优先于 config.sessionID，防止 MCP 环境 sessionID
+  //   覆盖显式选择导致 identity 匹配失败（复审 P1 修复）
   // - 失败不阻断 preflight（仅记录 warning），避免桥已通但注入接口异常时整链路失败
   // - 幂等：每次 preflight 都执行，App 重启后重连会再次注入
-  const sessionID = config?.sessionID;
+  const sessionID = expectedIdentity?.sessionID || config?.sessionID;
   let sessionInjection = null;
   if (sessionID && sessionID !== "local" && typeof bridgeClient.setSession === "function") {
     const injectionResult = await captureResult(() => bridgeClient.setSession(sessionID));

@@ -9,8 +9,8 @@ test("stopAllAndWait clears active forwards", async () => {
     iproxyPath: "iproxy",
     cwd: process.cwd(),
     bridgeBaseURLPortAuto: true,
-    bridgeBaseURL: "http://127.0.0.1:42671",
-    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
+    bridgeBaseURL: "http://127.0.0.1:37777",
+    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 37777 }],
   };
 
   const forwarder = new PortForwarder(config, {

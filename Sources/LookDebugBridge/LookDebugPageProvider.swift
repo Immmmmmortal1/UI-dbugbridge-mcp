@@ -3,7 +3,6 @@ import UIKit
 enum LookDebugPageProviderError: Error, Equatable {
     case pageUnavailable
 }
-
 @MainActor
 struct LookDebugPageProvider {
     func payload(for viewController: UIViewController?) throws -> LookDebugPagePayload {

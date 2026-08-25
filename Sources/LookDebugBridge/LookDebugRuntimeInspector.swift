@@ -89,7 +89,7 @@ struct LookDebugRuntimeInspector {
             className: String(describing: type(of: view)),
             accessibilityIdentifier: view.accessibilityIdentifier,
             accessibilityLabel: view.accessibilityLabel,
-            accessibilityValue: view.accessibilityValue,
+            accessibilityValue: secureValuePayload(for: view),
             frameInWindow: rectPayload(view.convert(view.bounds, to: nil)),
             hidden: view.isHidden,
             alpha: Double(view.alpha),
@@ -101,10 +101,46 @@ struct LookDebugRuntimeInspector {
 
     private func textValue(for view: UIView) -> String? {
         if let label = view as? UILabel { return label.text }
-        if let textField = view as? UITextField { return textField.text ?? textField.placeholder }
-        if let textView = view as? UITextView { return textView.text }
+        if let textField = view as? UITextField {
+            // secure 字段脱敏，避免明文泄漏到 window tree
+            if textField.isSecureTextEntry {
+                return redactedText(textField.text)
+            }
+            return textField.text ?? textField.placeholder
+        }
+        if let textView = view as? UITextView {
+            if #available(iOS 17.0, *), textView.isSecureTextEntry {
+                return redactedText(textView.text)
+            }
+            return textView.text
+        }
         if let button = view as? UIButton { return button.title(for: .normal) }
         return nil
+    }
+
+    /// 判断 view 是否为 secure 文本输入（用于 accessibilityValue 脱敏）
+    private func isSecureTextView(_ view: UIView) -> Bool {
+        if let textField = view as? UITextField, textField.isSecureTextEntry { return true }
+        if let textView = view as? UITextView,
+           #available(iOS 17.0, *),
+           textView.isSecureTextEntry {
+            return true
+        }
+        return false
+    }
+
+    /// secure 字段的 accessibilityValue 用占位替代明文
+    private func secureValuePayload(for view: UIView) -> String? {
+        if isSecureTextView(view) {
+            return redactedText(view.accessibilityValue)
+        }
+        return view.accessibilityValue
+    }
+
+    /// 脱敏：返回长度占位，不暴露明文
+    private func redactedText(_ text: String?) -> String? {
+        guard let text, !text.isEmpty else { return nil }
+        return "<redacted:len=\(text.count)>"
     }
 
     private func activeWindows() -> [UIWindow] {
@@ -138,7 +174,7 @@ struct LookDebugRuntimeInspector {
             anchor: anchor,
             accessibilityIdentifier: view.accessibilityIdentifier,
             accessibilityLabel: view.accessibilityLabel,
-            accessibilityValue: view.accessibilityValue,
+            accessibilityValue: secureValuePayload(for: view),
             className: String(describing: type(of: view)),
             classChain: classChain(for: view),
             frameInWindow: rectPayload(view.convert(view.bounds, to: nil)),
@@ -157,8 +193,10 @@ struct LookDebugRuntimeInspector {
             shadowOpacity: Double(layer.shadowOpacity),
             shadowRadius: Double(layer.shadowRadius),
             shadowOffset: sizePayload(layer.shadowOffset),
-            text: label?.text ?? textField?.text ?? textView?.text,
-            placeholder: textField?.placeholder,
+            text: secureDetailText(label: label, textField: textField, textView: textView),
+            placeholder: textField?.isSecureTextEntry == true
+                ? redactedText(textField?.placeholder)
+                : textField?.placeholder,
             fontName: label?.font.fontName ?? textField?.font?.fontName ?? textView?.font?.fontName,
             fontSize: (label?.font.pointSize ?? textField?.font?.pointSize ?? textView?.font?.pointSize).map(Double.init),
             textColor: colorPayload(label?.textColor ?? textField?.textColor ?? textView?.textColor),
@@ -171,6 +209,24 @@ struct LookDebugRuntimeInspector {
             controlSelected: control?.isSelected,
             controlHighlighted: control?.isHighlighted
         )
+    }
+
+    /// detail 节点的 text 字段：secure 文本框脱敏
+    private func secureDetailText(label: UILabel?, textField: UITextField?, textView: UITextView?) -> String? {
+        if let label { return label.text }
+        if let textField {
+            if textField.isSecureTextEntry {
+                return redactedText(textField.text)
+            }
+            return textField.text
+        }
+        if let textView {
+            if #available(iOS 17.0, *), textView.isSecureTextEntry {
+                return redactedText(textView.text)
+            }
+            return textView.text
+        }
+        return nil
     }
 
     private func summary(for view: UIView) -> LookDebugRuntimeNodeSummary {
@@ -257,7 +313,6 @@ struct LookDebugRuntimeInspector {
         }
     }
 }
-
 private final class TreeBuildState {
     private let maxNodes: Int
     private(set) var nodeCount = 0

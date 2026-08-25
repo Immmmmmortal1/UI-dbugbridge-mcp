@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { runEnvironmentPreflight } from "../src/environmentPreflight.js";
 
 function makeDependencies(overrides = {}) {
   return {
-    config: { sessionID: "test-session", bridgeBaseURL: "http://127.0.0.1:42671" },
+    config: { sessionID: "test-session", bridgeBaseURL: "http://127.0.0.1:37777" },
     runtimeTarget: { mode: "device", deviceUDID: "device-1" },
     portForwarder: {
       ensureAll: async () => ({ success: true, payload: { forwards: [] }, error: null }),
@@ -13,12 +14,12 @@ function makeDependencies(overrides = {}) {
       stopAllAndWait: async () => {},
     },
     bridgeClient: {
-      baseURL: "http://127.0.0.1:42671",
+      baseURL: "http://127.0.0.1:37777",
       ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
       getIdentity: async () => ({
         ok: true,
         status: 200,
-        payload: { ok: true, bundleID: "com.test", sessionID: "test-session", port: 42671 },
+        payload: { ok: true, bundleID: "com.test", sessionID: "test-session", port: 37777 },
       }),
     },
     ...overrides,
@@ -61,7 +62,7 @@ test("preflight syncs the bridge client to the allocated local port", async () =
 test("preflight fails when the in-app DebugBridge is unreachable", async () => {
   const result = await runEnvironmentPreflight(makeDependencies({
     bridgeClient: {
-      baseURL: "http://127.0.0.1:42671",
+      baseURL: "http://127.0.0.1:37777",
       ping: async () => ({ ok: false, status: 503, payload: { error: "bridge_down" } }),
     },
   }));
@@ -82,7 +83,7 @@ test("preflight reports forwarding failure instead of hiding it", async () => {
   assert.equal(checkByName(result, "port_forward").error, "iproxy_not_reachable");
 });
 
-test("preflight scans the next remote port when the first bridge belongs to another App", async () => {
+test("preflight scans the next explicit remote port when the first bridge belongs to another App", async () => {
   const attempts = [];
   const dependencies = makeDependencies();
   dependencies.portForwarder.ensureAll = async () => {
@@ -94,20 +95,20 @@ test("preflight scans the next remote port when the first bridge belongs to anot
   dependencies.bridgeClient.getIdentity = async () => ({
     ok: true,
     status: 200,
-    payload: attempts.at(-1) === 42671
-      ? { ok: true, bundleID: "com.other", sessionID: "other", port: 42671 }
-      : { ok: true, bundleID: "com.target", sessionID: "target", port: 42672 },
+    payload: attempts.at(-1) === 37777
+      ? { ok: true, bundleID: "com.other", sessionID: "other", port: 37777 }
+      : { ok: true, bundleID: "com.target", sessionID: "target", port: 37778 },
   });
 
   const result = await runEnvironmentPreflight({
     ...dependencies,
     expectedIdentity: { bundleID: "com.target", sessionID: "target" },
-    remotePortCandidates: [42671, 42672],
+    remotePortCandidates: [37777, 37778],
   });
 
   assert.equal(result.success, true);
-  assert.deepEqual(attempts, [42671, 42672]);
-  assert.equal(result.payload.remotePort, 42672);
+  assert.deepEqual(attempts, [37777, 37778]);
+  assert.equal(result.payload.remotePort, 37778);
   assert.equal(result.payload.identity.bundleID, "com.target");
 });
 
@@ -126,7 +127,7 @@ test("preflight ignores a localhost target when a physical device is present", a
   dependencies.bridgeClient.getIdentity = async () => ({
     ok: true,
     status: 200,
-    payload: { ok: true, bundleID: "com.device", sessionID: "device", port: 42671 },
+    payload: { ok: true, bundleID: "com.device", sessionID: "device", port: 37777 },
   });
 
   const result = await runEnvironmentPreflight({
@@ -146,15 +147,15 @@ test("preflight ignores a localhost target when a physical device is present", a
       },
     ],
     expectedIdentity: { bundleID: "com.device" },
-    remotePortCandidates: [42671],
+    remotePortCandidates: [37777],
   });
 
   assert.equal(result.success, true);
   assert.equal(result.payload.mode, "device");
   assert.equal(result.payload.identity.bundleID, "com.device");
   assert.equal(result.payload.discovered.length, 1);
-  assert.equal(dependencies.bridgeClient.baseURL, "http://[fd00::1]:42671");
-  assert.deepEqual(calls, ["http://[fd00::1]:42671"]);
+  assert.equal(dependencies.bridgeClient.baseURL, "http://[fd00::1]:37777");
+  assert.deepEqual(calls, ["http://[fd00::1]:37777"]);
 });
 
 test("multi-target selection prefers wired device over other live bridges", async () => {
@@ -167,7 +168,7 @@ test("multi-target selection prefers wired device over other live bridges", asyn
           deviceUDID: "device-wireless",
           device: { transport: "localNetwork", name: "iPhone" },
         },
-        bridgeBaseURL: "http://[fd00::2]:42671",
+        bridgeBaseURL: "http://[fd00::2]:37777",
         identity: { bundleID: "com.wireless" },
       },
       {
@@ -176,7 +177,7 @@ test("multi-target selection prefers wired device over other live bridges", asyn
           deviceUDID: "device-1",
           device: { transport: "wired", name: "iPhone" },
         },
-        bridgeBaseURL: "http://[fd00::1]:42671",
+        bridgeBaseURL: "http://[fd00::1]:37777",
         identity: { bundleID: "com.device" },
       },
     ],
@@ -186,17 +187,15 @@ test("multi-target selection prefers wired device over other live bridges", asyn
   assert.equal(selected.identity.bundleID, "com.device");
 });
 
-// 默认 ping 优先复用上一次成功激活的 remotePort（缓存于 portForwards[0].remotePort），
-// 避免默认扫描误走旧 legacy 转发路径
-test("default ping probes the cached remotePort first when no explicit port is given", async () => {
+// 默认 ping 不再扫描端口段，App 侧只暴露一个端口（37777）。
+// 连续会话复用同一端口：session A release 后 session B 直接 ping 同一端口即可。
+test("default ping probes only the default port 37777 when no explicit port is given", async () => {
   const attempts = [];
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:42671",
-    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42675 }],
-    bridgeRemotePortStart: 42671,
-    bridgeRemotePortEnd: 42676,
+    bridgeBaseURL: "http://127.0.0.1:37777",
+    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 37777 }],
   };
   dependencies.portForwarder = {
     ensureAll: async () => {
@@ -206,44 +205,33 @@ test("default ping probes the cached remotePort first when no explicit port is g
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:42671",
+    baseURL: "http://127.0.0.1:37777",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
-    ping: async () => {
-      const port = dependencies.config.portForwards[0].remotePort;
-      return port === 42675
-        ? { ok: true, status: 200, payload: { success: true } }
-        : { ok: false, status: 503, payload: { error: "bridge_down" } };
-    },
+    ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({
       ok: true,
       status: 200,
-      payload: { ok: true, bundleID: "com.test", sessionID: "test-session", port: 42675 },
+      payload: { ok: true, bundleID: "com.test", sessionID: "test-session", port: 37777 },
     }),
   };
 
   const result = await runEnvironmentPreflight(dependencies);
 
   assert.equal(result.success, true);
-  // 缓存端口 42675 必须是第一个探测的候选
-  assert.equal(attempts[0], 42675, "cached remotePort should be probed first");
-  assert.equal(result.payload.remotePort, 42675);
-  // 全量扫描（去重后 6 个端口），再恢复选中的 iproxy 端口
-  assert.equal(attempts.length, 7);
-  // 候选列表里 42675 已去重；末尾第二次是恢复选中的 iproxy 端口
-  assert.equal(attempts.filter((p) => p === 42675).length, 2);
+  assert.equal(result.payload.remotePort, 37777);
+  // 默认只探测一个端口，不再扫描 42671-42770
+  assert.deepEqual(attempts, [37777]);
 });
 
 // activateBridge 成功后必须把 selected.remotePort 同步回 config.portForwards[0].remotePort，
-// 避免后续流程残留旧 42770/legacy 端口（probeTargetPorts 循环会把该字段覆盖为最后一个探测端口）
+// 避免后续流程残留旧 legacy 端口（probeTargetPorts 循环会把该字段覆盖为最后一个探测端口）
 test("activateBridge syncs the selected remotePort back into config.portForwards", async () => {
   const attempts = [];
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:42671",
-    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
-    bridgeRemotePortStart: 42671,
-    bridgeRemotePortEnd: 42673,
+    bridgeBaseURL: "http://127.0.0.1:37777",
+    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 37777 }],
   };
   dependencies.portForwarder = {
     ensureAll: async () => {
@@ -253,44 +241,36 @@ test("activateBridge syncs the selected remotePort back into config.portForwards
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:42671",
+    baseURL: "http://127.0.0.1:37777",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
-    ping: async () => {
-      const port = dependencies.config.portForwards[0].remotePort;
-      return port === 42671
-        ? { ok: true, status: 200, payload: { success: true } }
-        : { ok: false, status: 503, payload: { error: "bridge_down" } };
-    },
+    ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({
       ok: true,
       status: 200,
-      payload: { ok: true, bundleID: "com.test", sessionID: "test-session", port: 42671 },
+      payload: { ok: true, bundleID: "com.test", sessionID: "test-session", port: 37777 },
     }),
   };
 
   const result = await runEnvironmentPreflight(dependencies);
 
   assert.equal(result.success, true);
-  assert.equal(result.payload.remotePort, 42671);
-  // 最后探测的端口是 42673，但 activateBridge 必须把 selected.remotePort (42671) 同步回 config
+  assert.equal(result.payload.remotePort, 37777);
   assert.equal(
     dependencies.config.portForwards[0].remotePort,
-    42671,
-    "activateBridge should sync selected.remotePort back, not leave the last-probed port"
+    37777,
+    "activateBridge should sync selected.remotePort back"
   );
 });
 
-// 显式 args.remotePort（通过 remotePortCandidates 传入）仍只探测该一个端口，不被缓存端口干扰
-test("explicit remotePort candidates probe only that single port, ignoring cached port", async () => {
+// 显式 args.remotePort（通过 remotePortCandidates 传入）仍只探测该一个端口，不被默认端口干扰
+test("explicit remotePort candidates probe only that single port, ignoring default port", async () => {
   const attempts = [];
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:42671",
-    // 缓存端口 42675，但显式指定 42699 时应忽略缓存
-    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42675 }],
-    bridgeRemotePortStart: 42671,
-    bridgeRemotePortEnd: 42770,
+    bridgeBaseURL: "http://127.0.0.1:37777",
+    // 默认端口 37777，但显式指定 42699 时应只探测 42699
+    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 37777 }],
   };
   dependencies.portForwarder = {
     ensureAll: async () => {
@@ -300,7 +280,7 @@ test("explicit remotePort candidates probe only that single port, ignoring cache
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:42671",
+    baseURL: "http://127.0.0.1:37777",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({
@@ -328,8 +308,8 @@ test("non-tunnel target falls through to iproxy mode even when config.tunnelIPAd
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:42671",
-    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
+    bridgeBaseURL: "http://127.0.0.1:37777",
+    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 37777 }],
     bridgeRemotePortExplicit: true,
     // 上一次 tunnel 激活留下的残留 tunnel IP
     tunnelIPAddress: "fd00::1",
@@ -343,13 +323,13 @@ test("non-tunnel target falls through to iproxy mode even when config.tunnelIPAd
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:42671",
+    baseURL: "http://127.0.0.1:37777",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({
       ok: true,
       status: 200,
-      payload: { ok: true, bundleID: "com.test", sessionID: "test-session", port: 42671 },
+      payload: { ok: true, bundleID: "com.test", sessionID: "test-session", port: 37777 },
     }),
   };
 
@@ -366,16 +346,16 @@ test("non-tunnel target falls through to iproxy mode even when config.tunnelIPAd
   );
 });
 
-test("selected iproxy remotePort is re-ensured after full scan leaves a later port active", async () => {
+// 显式多端口候选时，selectLiveBridge 选中匹配端口后，activateBridge 必须重新 ensure 该端口，
+// 因为 probeTargetPorts 循环结束后 currentForwardRemotePort 停留在最后一个探测端口
+test("selected iproxy remotePort is re-ensured after multi-port scan leaves a later port active", async () => {
   const attempts = [];
   const stopCalls = [];
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:42671",
-    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
-    bridgeRemotePortStart: 42671,
-    bridgeRemotePortEnd: 42673,
+    bridgeBaseURL: "http://127.0.0.1:37777",
+    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 37777 }],
   };
   dependencies.portForwarder = {
     ensureAll: async () => {
@@ -385,14 +365,14 @@ test("selected iproxy remotePort is re-ensured after full scan leaves a later po
     stopAllAndWait: async () => { stopCalls.push(true); },
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:42671",
+    baseURL: "http://127.0.0.1:37777",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({
       ok: true,
       status: 200,
-      payload: dependencies.config.portForwards[0].remotePort === 42671
-        ? { ok: true, bundleID: "com.target", sessionID: "test-session", port: 42671 }
+      payload: dependencies.config.portForwards[0].remotePort === 37777
+        ? { ok: true, bundleID: "com.target", sessionID: "test-session", port: 37777 }
         : { ok: true, bundleID: "com.other", sessionID: "other", port: dependencies.config.portForwards[0].remotePort },
     }),
   };
@@ -400,99 +380,25 @@ test("selected iproxy remotePort is re-ensured after full scan leaves a later po
   const result = await runEnvironmentPreflight({
     ...dependencies,
     expectedIdentity: { bundleID: "com.target" },
+    remotePortCandidates: [37777, 37778, 37779],
   });
 
   assert.equal(result.success, true);
-  assert.equal(result.payload.remotePort, 42671);
-  assert.deepEqual(attempts, [42671, 42672, 42673, 42671]);
-  assert.equal(dependencies.config.portForwards[0].remotePort, 42671);
+  assert.equal(result.payload.remotePort, 37777);
+  // 扫描 3 个端口后，activateBridge 重新 ensure 选中的 37777
+  assert.deepEqual(attempts, [37777, 37778, 37779, 37777]);
+  assert.equal(dependencies.config.portForwards[0].remotePort, 37777);
   assert.equal(stopCalls.length >= 3, true);
 });
 
-test("cached remotePort still falls back to default full range when range config is absent", async () => {
-  const attempts = [];
-  const dependencies = makeDependencies();
-  dependencies.config = {
-    sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:42671",
-    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42675 }],
-  };
-  dependencies.portForwarder = {
-    ensureAll: async () => {
-      attempts.push(dependencies.config.portForwards[0].remotePort);
-      return { success: true, payload: { forwards: [] }, error: null };
-    },
-    stopAllAndWait: async () => {},
-  };
-  dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:42671",
-    setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
-    ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
-    getIdentity: async () => ({
-      ok: true,
-      status: 200,
-      payload: { ok: true, bundleID: "com.test", sessionID: "test-session", port: dependencies.config.portForwards[0].remotePort },
-    }),
-  };
-
-  const result = await runEnvironmentPreflight(dependencies);
-
-  assert.equal(result.success, true);
-  assert.equal(attempts[0], 42675);
-  assert.equal(attempts.includes(42770), true);
-});
-
-test("selected iproxy remotePort is re-ensured when later probes fail after stopping it", async () => {
-  const attempts = [];
-  const dependencies = makeDependencies();
-  dependencies.config = {
-    sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:42671",
-    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
-    bridgeRemotePortStart: 42671,
-    bridgeRemotePortEnd: 42672,
-  };
-  dependencies.portForwarder = {
-    ensureAll: async () => {
-      const port = dependencies.config.portForwards[0].remotePort;
-      attempts.push(port);
-      dependencies.config.bridgeBaseURL = `http://127.0.0.1:${port}`;
-      return { success: true, payload: { forwards: [{ remotePort: port }] }, error: null };
-    },
-    stopAllAndWait: async () => {},
-  };
-  dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:42671",
-    setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
-    ping: async () => dependencies.config.portForwards[0].remotePort === 42671
-      ? { ok: true, status: 200, payload: { success: true } }
-      : { ok: false, status: 503, payload: { error: "bridge_down" } },
-    getIdentity: async () => ({
-      ok: true,
-      status: 200,
-      payload: { ok: true, bundleID: "com.target", sessionID: "test-session", port: 42671 },
-    }),
-  };
-
-  const result = await runEnvironmentPreflight({
-    ...dependencies,
-    expectedIdentity: { bundleID: "com.target" },
-  });
-
-  assert.equal(result.success, true);
-  assert.deepEqual(attempts, [42671, 42672, 42671]);
-  assert.equal(dependencies.config.portForwards[0].remotePort, 42671);
-});
-
+// reactivated iproxy 在重新 ensure 后使用新分配的 bridgeBaseURL，而非 selected 旧 URL
 test("reactivated iproxy uses the newly allocated bridgeBaseURL instead of stale selected URL", async () => {
   const attempts = [];
   const dependencies = makeDependencies();
   dependencies.config = {
     sessionID: "test-session",
-    bridgeBaseURL: "http://127.0.0.1:42671",
-    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 42671 }],
-    bridgeRemotePortStart: 42671,
-    bridgeRemotePortEnd: 42672,
+    bridgeBaseURL: "http://127.0.0.1:37777",
+    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 37777 }],
   };
   dependencies.portForwarder = {
     ensureAll: async () => {
@@ -506,25 +412,131 @@ test("reactivated iproxy uses the newly allocated bridgeBaseURL instead of stale
     stopAllAndWait: async () => {},
   };
   dependencies.bridgeClient = {
-    baseURL: "http://127.0.0.1:42671",
+    baseURL: "http://127.0.0.1:37777",
     setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
     ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
     getIdentity: async () => ({
       ok: true,
       status: 200,
-      payload: dependencies.config.portForwards[0].remotePort === 42671
-        ? { ok: true, bundleID: "com.target", sessionID: "test-session", port: 42671 }
-        : { ok: true, bundleID: "com.other", sessionID: "other", port: 42672 },
+      payload: dependencies.config.portForwards[0].remotePort === 37777
+        ? { ok: true, bundleID: "com.target", sessionID: "test-session", port: 37777 }
+        : { ok: true, bundleID: "com.other", sessionID: "other", port: 37778 },
     }),
   };
 
   const result = await runEnvironmentPreflight({
     ...dependencies,
     expectedIdentity: { bundleID: "com.target" },
+    remotePortCandidates: [37777, 37778],
   });
 
   assert.equal(result.success, true);
-  assert.deepEqual(attempts, [42671, 42672, 42671]);
+  assert.deepEqual(attempts, [37777, 37778, 37777]);
   assert.equal(dependencies.bridgeClient.baseURL, "http://127.0.0.1:51000");
   assert.equal(result.payload.bridgeBaseURL, "http://127.0.0.1:51000");
+});
+
+// sessionID 是上下文标记，不是并发隔离：
+// - 默认（未传 args.sessionID）不按 sessionID 过滤，任何活桥都可被选中
+// - 用户显式传 args.sessionID 时才按该值做 identity 匹配
+// - 多个 MCP 会话并发控制同一 App 仍需后续 ownership/lease 机制
+test("preflight does not filter by sessionID by default (no args.sessionID)", async () => {
+  const dependencies = makeDependencies();
+  // App 返回的 sessionID 是 "some-other-session"（非 "test-session"）
+  dependencies.bridgeClient.getIdentity = async () => ({
+    ok: true,
+    status: 200,
+    payload: { ok: true, bundleID: "com.test", sessionID: "some-other-session", port: 37777 },
+  });
+
+  // 不传 expectedIdentity，默认行为应放行任意 App sessionID
+  const result = await runEnvironmentPreflight(dependencies);
+
+  assert.equal(result.success, true);
+  assert.equal(result.payload.identity.sessionID, "some-other-session");
+  assert.equal(result.payload.identity.bundleID, "com.test");
+});
+
+// 显式 args.sessionID 才会按 sessionID 做严格匹配（用于"认领"特定 App 上下文）
+// 注意：即便匹配成功，也不代表真正并发隔离——仍可能两个会话并发控制同一 App
+test("preflight filters by sessionID only when args.sessionID is explicitly provided", async () => {
+  const dependencies = makeDependencies();
+  dependencies.bridgeClient.getIdentity = async () => ({
+    ok: true,
+    status: 200,
+    payload: { ok: true, bundleID: "com.test", sessionID: "expected-session", port: 37777 },
+  });
+
+  const ok = await runEnvironmentPreflight({
+    ...dependencies,
+    expectedIdentity: { sessionID: "expected-session" },
+  });
+  assert.equal(ok.success, true);
+
+  const mismatch = await runEnvironmentPreflight({
+    ...dependencies,
+    expectedIdentity: { sessionID: "different-session" },
+  });
+  assert.equal(mismatch.success, false);
+  assert.match(mismatch.error, /bridge_target_mismatch/);
+});
+
+// 复审 P1：显式 args.sessionID 必须优先于 MCP 环境 sessionID（config.sessionID）用于注入。
+// 否则 probe / activate 后注入会把 config.sessionID 推给 App，覆盖显式选择，
+// 导致 App identity.sessionID 不再匹配 expectedIdentity.sessionID。
+// 通过 fake bridgeClient.setSession 记录入参，断言显式 B 不会被 config A 覆盖。
+test("explicit expectedIdentity.sessionID wins over config.sessionID for probe + activate injection", async () => {
+  const setSessionCalls = [];
+  const dependencies = makeDependencies();
+  // MCP 环境 sessionID = "config-session-A"
+  dependencies.config = {
+    sessionID: "config-session-A",
+    bridgeBaseURL: "http://127.0.0.1:37777",
+    portForwards: [{ name: "debug_bridge", localPort: 0, autoAllocate: true, remotePort: 37777 }],
+  };
+  dependencies.portForwarder = {
+    ensureAll: async () => ({ success: true, payload: { forwards: [] }, error: null }),
+    stopAllAndWait: async () => {},
+  };
+  // setSession 覆盖式写入：模拟 App 把最近一次注入值作为 identity.sessionID 返回
+  let injectedSessionID = "local";
+  dependencies.bridgeClient = {
+    baseURL: "http://127.0.0.1:37777",
+    setBaseURL: (url) => { dependencies.bridgeClient.baseURL = url; },
+    ping: async () => ({ ok: true, status: 200, payload: { success: true } }),
+    getIdentity: async () => ({
+      ok: true,
+      status: 200,
+      payload: { ok: true, bundleID: "com.test", sessionID: injectedSessionID, port: 37777 },
+    }),
+    setSession: async (sessionID) => {
+      setSessionCalls.push(sessionID);
+      injectedSessionID = sessionID;
+      return { ok: true, status: 200, payload: { ok: true, sessionID } };
+    },
+  };
+
+  // 显式 expectedIdentity.sessionID = "explicit-session-B"，必须优先于 config.sessionID
+  const result = await runEnvironmentPreflight({
+    ...dependencies,
+    expectedIdentity: { sessionID: "explicit-session-B" },
+  });
+
+  assert.equal(result.success, true, "should match explicit sessionID, not be overridden by config.sessionID");
+  // probe 阶段 + activate 后注入都应使用 explicit-session-B，不能是 config-session-A
+  assert.deepEqual(setSessionCalls, ["explicit-session-B", "explicit-session-B"]);
+  // identity.sessionID 应为显式值，匹配 expectedIdentity
+  assert.equal(result.payload.identity.sessionID, "explicit-session-B");
+  // payload.sessionID 仍表示 MCP 当前 config.sessionID（上下文标记），不被显式值改写
+  assert.equal(result.payload.sessionID, "config-session-A");
+});
+
+// sessionPort() 死代码已删除：sessionID 与端口不再绑定，连续会话复用同一远端 37777
+test("config.js no longer exposes sessionPort (sessionID is not port-bound)", async () => {
+  const configSource = await readFile(
+    new URL("../src/config.js", import.meta.url),
+    "utf8"
+  );
+  assert.doesNotMatch(configSource, /function sessionPort/);
+  assert.doesNotMatch(configSource, /sessionPort\(sessionID\)/);
 });

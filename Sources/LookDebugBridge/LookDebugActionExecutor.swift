@@ -4,7 +4,6 @@ enum LookDebugActionExecutorError: Error, Equatable {
     case elementNotFound
     case unsupportedElementType
 }
-
 @MainActor
 struct LookDebugActionExecutor {
     let registry: LookDebugElementRegistry
@@ -67,12 +66,6 @@ struct LookDebugActionExecutor {
         }
 
         control.sendActions(for: .touchUpInside)
-        // Some app controls (e.g. LovOnOverlayRouteButton) bind business actions via
-        // accessibilityActivate/onActivate without a UIAction for touchUpInside.
-        // Fall back so DebugBridge taps still reach those handlers once.
-        if control is UIButton {
-            _ = control.accessibilityActivate()
-        }
     }
 
     func setSwitch(id: String, isOn: Bool) throws {
@@ -89,7 +82,7 @@ struct LookDebugActionExecutor {
         switchControl.sendActions(for: .valueChanged)
     }
 
-    func setText(id: String, text: String, appending: Bool) throws -> String {
+    func setText(id: String, text: String, appending: Bool) throws -> (finalText: String, isSecure: Bool) {
         guard let entry = registry.entry(for: id),
               let view = entry.view else {
             throw LookDebugActionExecutorError.elementNotFound
@@ -114,7 +107,7 @@ struct LookDebugActionExecutor {
         return view
     }
 
-    private func setTextFieldText(_ textField: UITextField, text: String, appending: Bool) throws -> String {
+    private func setTextFieldText(_ textField: UITextField, text: String, appending: Bool) throws -> (finalText: String, isSecure: Bool) {
         let current = textField.text ?? ""
         let next = appending ? current + text : text
         let range = appending
@@ -127,12 +120,17 @@ struct LookDebugActionExecutor {
 
         textField.becomeFirstResponder()
         textField.text = next
-        textField.accessibilityValue = next.isEmpty ? nil : next
+        // secure 字段不写明文到 accessibilityValue，写长度占位避免泄漏
+        if textField.isSecureTextEntry {
+            textField.accessibilityValue = next.isEmpty ? nil : String(repeating: "•", count: min(next.count, 64))
+        } else {
+            textField.accessibilityValue = next.isEmpty ? nil : next
+        }
         textField.sendActions(for: .editingChanged)
-        return next
+        return (next, textField.isSecureTextEntry)
     }
 
-    private func setTextViewText(_ textView: UITextView, text: String, appending: Bool) throws -> String {
+    private func setTextViewText(_ textView: UITextView, text: String, appending: Bool) throws -> (finalText: String, isSecure: Bool) {
         let current = textView.text ?? ""
         let next = appending ? current + text : text
         let range = appending
@@ -143,12 +141,26 @@ struct LookDebugActionExecutor {
             throw LookDebugActionExecutorError.unsupportedElementType
         }
 
+        let isSecure = lookDebugIsSecureTextView(textView)
         textView.becomeFirstResponder()
         textView.text = next
-        textView.accessibilityValue = next.isEmpty ? nil : next
+        // secure 字段不写明文到 accessibilityValue，写长度占位避免泄漏
+        if isSecure {
+            textView.accessibilityValue = next.isEmpty ? nil : String(repeating: "•", count: min(next.count, 64))
+        } else {
+            textView.accessibilityValue = next.isEmpty ? nil : next
+        }
         textView.delegate?.textViewDidChange?(textView)
         NotificationCenter.default.post(name: UITextView.textDidChangeNotification, object: textView)
-        return next
+        return (next, isSecure)
+    }
+
+    /// UITextView.isSecureTextEntry 是 iOS 17+ API，旧版本无该属性，用 #available 兼容
+    private func lookDebugIsSecureTextView(_ textView: UITextView) -> Bool {
+        if #available(iOS 17.0, *) {
+            return textView.isSecureTextEntry
+        }
+        return false
     }
 
     private func tapTabBarButton(_ control: UIControl) -> Bool {

@@ -5,7 +5,10 @@
   "type": "module",
   "description": "Thin MCP wrapper for the in-app DebugBridge. Discovers simultaneous bridges on physical iOS devices only.",
   "scripts": {
-    "build": "node --check src/config.js && node --check src/environmentPreflight.js && node --check src/runtimeTarget.js && node --check src/httpBridgeClient.js && node --check src/screenshotClient.js && node --check src/portForwarder.js && node --check src/server.js",
+    "build": "node --check src/config.js && node --check src/environmentPreflight.js && node --check src/runtimeTarget.js && node --check src/httpBridgeClient.js && node --check src/screenshotClient.js && node --check src/portForwarder.js && node --check src/server.js && node --check scripts/check-bridge-version-sync.js && npm run check:bridge-version:offline",
+    "check:bridge-version": "node scripts/check-bridge-version-sync.js",
+    "check:bridge-version:offline": "node scripts/check-bridge-version-sync.js --offline",
+    "release:check": "npm run build && npm test && npm run check:bridge-version",
     "start": "node src/server.js",
     "test": "node --test"
   }
