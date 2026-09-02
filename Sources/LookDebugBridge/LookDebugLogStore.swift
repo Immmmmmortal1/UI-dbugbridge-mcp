@@ -14,6 +14,15 @@ struct LookDebugLogsResponse: Codable, Equatable {
     let error: String?
 }
 
+/// 日志输出过滤器：在 append 入口丢弃不匹配的日志，从源头减轻 ring buffer 和 HTTP 查询压力。
+/// - categories: 非空时只放行 category 在集合内的日志；nil/空 = 不按 category 过滤
+/// - keywords: 非空时只放行 message 含任一关键词（大小写不敏感）的日志；nil/空 = 不按关键词过滤
+/// 两个维度同时设置时取交集（都必须满足）。两个字段都空 = 放行全部（等同未设置过滤）。
+struct LookDebugLogOutputFilter: Codable, Equatable {
+    var categories: [String]?
+    var keywords: [String]?
+}
+
 actor LookDebugLogStore {
     static let shared = LookDebugLogStore()
 
@@ -42,7 +51,14 @@ actor LookDebugLogStore {
     private var entries: [LookDebugLogEntry] = []
     private var generation = 0
 
+    /// 当前输出过滤器；nil = 放行全部（默认）。通过 /debug/logs/filter 设置/清除。
+    private var outputFilter: LookDebugLogOutputFilter?
+
     func append(level: String, category: String, message: String) {
+        // 源头过滤：不匹配的日志直接丢弃，不进 ring buffer，不触发截断/脱敏/序列化
+        if let filter = outputFilter, isAllowedByFilter(filter, category: category, message: message) == false {
+            return
+        }
         let processed = Self.redact(message: Self.truncate(message: message))
         let entry = LookDebugLogEntry(
             timestamp: ISO8601DateFormatter().string(from: Date()),
@@ -56,6 +72,39 @@ actor LookDebugLogStore {
             entries.removeFirst(entries.count - Self.maxEntries)
         }
         generation += 1
+    }
+
+    /// 判断日志是否通过输出过滤器（两个维度取交集）
+    private func isAllowedByFilter(_ filter: LookDebugLogOutputFilter, category: String, message: String) -> Bool {
+        // category 维度：非空集合时 category 必须在集合内
+        if let categories = filter.categories, categories.isEmpty == false {
+            if categories.contains(category) == false { return false }
+        }
+        // keyword 维度：非空集合时 message 必须含任一关键词（大小写不敏感）
+        if let keywords = filter.keywords, keywords.isEmpty == false {
+            let lowerMessage = message.lowercased()
+            if keywords.contains(where: { lowerMessage.contains($0.lowercased()) }) == false {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// 设置输出过滤器；两个字段都 nil/空 = 清除过滤（放行全部）
+    func setOutputFilter(_ filter: LookDebugLogOutputFilter) {
+        let hasCategory = filter.categories?.isEmpty == false
+        let hasKeyword = filter.keywords?.isEmpty == false
+        outputFilter = (hasCategory || hasKeyword) ? filter : nil
+    }
+
+    /// 清除输出过滤器，恢复放行全部
+    func clearOutputFilter() {
+        outputFilter = nil
+    }
+
+    /// 读取当前输出过滤器
+    func currentOutputFilter() -> LookDebugLogOutputFilter? {
+        outputFilter
     }
 
     /// 截断超长 message

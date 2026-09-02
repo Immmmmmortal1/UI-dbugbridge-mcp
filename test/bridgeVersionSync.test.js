@@ -10,9 +10,9 @@ import {
 test("bridge version check passes local MCP, Pod, and README synchronization", () => {
   const result = checkBridgeVersionSync({ offline: true });
   assert.equal(result.ok, true);
-  assert.equal(result.mcpVersion, "0.1.15");
-  assert.equal(result.podVersion, "0.1.15");
-  assert.deepEqual(result.readmeTags, ["0.1.15"]);
+  assert.equal(result.mcpVersion, "0.1.16");
+  assert.equal(result.podVersion, "0.1.16");
+  assert.deepEqual(result.readmeTags, ["0.1.16"]);
 });
 
 test("latest bridge tag parser ignores annotated peeled refs and sorts semver", () => {

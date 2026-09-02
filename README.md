@@ -45,7 +45,7 @@ target 'YourApp' do
 
   pod 'LookDebugBridge',
       :git => 'git@github.com:Immmmmmortal1/LookDebugBridgeService.git',
-      :tag => '0.1.15',
+      :tag => '0.1.16',
       :configurations => ['Debug']
 end
 ```

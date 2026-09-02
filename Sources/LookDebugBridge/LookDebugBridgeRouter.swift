@@ -256,8 +256,48 @@ struct LookDebugBridgeRouter {
         return try jsonResponse(statusCode: 200, payload: payload)
     }
 
+    /// GET /debug/logs/filter：返回当前输出过滤器
+    func logsFilterGet() async throws -> LookDebugHTTPResponse {
+        let current = await LookDebugLogStore.shared.currentOutputFilter()
+        let payload = LookDebugLogFilterResponse(
+            success: true,
+            filter: current,
+            active: current != nil
+        )
+        return try jsonResponse(statusCode: 200, payload: payload)
+    }
+
+    /// POST /debug/logs/filter：设置输出过滤器（body: {"categories": [...], "keywords": [...]}）
+    func logsFilterSet(_ filter: LookDebugLogOutputFilter) async throws -> LookDebugHTTPResponse {
+        await LookDebugLogStore.shared.setOutputFilter(filter)
+        let payload = LookDebugLogFilterResponse(
+            success: true,
+            filter: filter,
+            active: true
+        )
+        return try jsonResponse(statusCode: 200, payload: payload)
+    }
+
+    /// DELETE /debug/logs/filter：清除输出过滤器，恢复放行全部
+    func logsFilterClear() async throws -> LookDebugHTTPResponse {
+        await LookDebugLogStore.shared.clearOutputFilter()
+        let payload = LookDebugLogFilterResponse(
+            success: true,
+            filter: nil,
+            active: false
+        )
+        return try jsonResponse(statusCode: 200, payload: payload)
+    }
+
     private func jsonResponse<T: Encodable>(statusCode: Int, payload: T) throws -> LookDebugHTTPResponse {
         let data = try JSONEncoder().encode(payload)
         return LookDebugHTTPResponse(statusCode: statusCode, body: data)
     }
+}
+
+/// /debug/logs/filter 响应体
+struct LookDebugLogFilterResponse: Codable, Equatable {
+    let success: Bool
+    let filter: LookDebugLogOutputFilter?
+    let active: Bool
 }

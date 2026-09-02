@@ -240,6 +240,13 @@ final class LookDebugBridgeServer {
                     limit: request.queryInt("limit", default: LookDebugLogStore.defaultReadLimit),
                     waitMs: request.queryInt("wait_ms", default: 0)
                 )
+            case ("GET", "/debug/logs/filter"):
+                return try await router.logsFilterGet()
+            case ("POST", "/debug/logs/filter"):
+                let payload = try JSONDecoder().decode(LookDebugLogOutputFilter.self, from: request.body)
+                return try await router.logsFilterSet(payload)
+            case ("DELETE", "/debug/logs/filter"):
+                return try await router.logsFilterClear()
             case ("GET", "/debug/windows"):
                 return try router.windows(
                     depth: request.queryInt("depth", default: 8),
