@@ -243,6 +243,10 @@ final class LookDebugBridgeServer {
             case ("GET", "/debug/logs/filter"):
                 return try await router.logsFilterGet()
             case ("POST", "/debug/logs/filter"):
+                // 空 body 或纯空白 = 清除过滤（与 DELETE 等效）
+                if request.body.isEmpty {
+                    return try await router.logsFilterClear()
+                }
                 let payload = try JSONDecoder().decode(LookDebugLogOutputFilter.self, from: request.body)
                 return try await router.logsFilterSet(payload)
             case ("DELETE", "/debug/logs/filter"):

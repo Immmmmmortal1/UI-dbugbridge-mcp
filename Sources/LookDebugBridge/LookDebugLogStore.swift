@@ -90,11 +90,24 @@ actor LookDebugLogStore {
         return true
     }
 
-    /// 设置输出过滤器；两个字段都 nil/空 = 清除过滤（放行全部）
+    /// 设置输出过滤器；两个字段都 nil/空/纯空白 = 清除过滤（放行全部）
     func setOutputFilter(_ filter: LookDebugLogOutputFilter) {
-        let hasCategory = filter.categories?.isEmpty == false
-        let hasKeyword = filter.keywords?.isEmpty == false
-        outputFilter = (hasCategory || hasKeyword) ? filter : nil
+        let trimmedCategories = filter.categories?
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+        let trimmedKeywords = filter.keywords?
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+        let hasCategory = trimmedCategories?.isEmpty == false
+        let hasKeyword = trimmedKeywords?.isEmpty == false
+        if hasCategory || hasKeyword {
+            outputFilter = LookDebugLogOutputFilter(
+                categories: hasCategory ? trimmedCategories : nil,
+                keywords: hasKeyword ? trimmedKeywords : nil
+            )
+        } else {
+            outputFilter = nil
+        }
     }
 
     /// 清除输出过滤器，恢复放行全部

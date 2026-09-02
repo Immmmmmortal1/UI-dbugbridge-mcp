@@ -270,10 +270,12 @@ struct LookDebugBridgeRouter {
     /// POST /debug/logs/filter：设置输出过滤器（body: {"categories": [...], "keywords": [...]}）
     func logsFilterSet(_ filter: LookDebugLogOutputFilter) async throws -> LookDebugHTTPResponse {
         await LookDebugLogStore.shared.setOutputFilter(filter)
+        // 重新读真实状态：空 filter 在 store 内被 normalize 为 nil，响应要反映真实 active 状态
+        let actual = await LookDebugLogStore.shared.currentOutputFilter()
         let payload = LookDebugLogFilterResponse(
             success: true,
-            filter: filter,
-            active: true
+            filter: actual,
+            active: actual != nil
         )
         return try jsonResponse(statusCode: 200, payload: payload)
     }
