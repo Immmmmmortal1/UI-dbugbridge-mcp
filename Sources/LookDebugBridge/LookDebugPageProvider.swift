@@ -79,6 +79,14 @@ struct LookDebugPageProvider {
         let generatedID = generatedID(for: view, pageID: pageID, path: path)
 
         if isVisible, let tabBar = view as? UITabBar {
+            // iOS 26 tabs 模式下，TabBar 按钮已由 registerTabBarControllerElements 通过 UITab API 注册；
+            // 这里再遍历 UITabBar.subviews 会用无 tapAction 的私有 UIControl 覆盖已注册的 index id。
+            if #available(iOS 26.0, *) {
+                let responderChainTabBarController = findTabBarController(for: tabBar)
+                if let tbc = responderChainTabBarController, !tbc.tabs.isEmpty {
+                    return
+                }
+            }
             registerTabBarElements(tabBar, registry: registry)
             return
         }
@@ -128,10 +136,67 @@ struct LookDebugPageProvider {
         return result
     }
 
+    /// 通过 responder chain 从 UITabBar 找到所属的 UITabBarController。
+    /// 用于在 UI 树遍历时判断 UITabBar 是否属于 iOS 26 tabs 模式的 controller。
+    private func findTabBarController(for tabBar: UITabBar) -> UITabBarController? {
+        var responder: UIResponder? = tabBar
+        while let current = responder {
+            if let tabBarController = current as? UITabBarController {
+                return tabBarController
+            }
+            responder = current.next
+        }
+        return nil
+    }
+
     private func registerTabBarControllerElements(
         _ tabBarController: UITabBarController,
         registry: LookDebugElementRegistry
     ) {
+        // iOS 26+ 的 UITabBarController 使用 mode = .tabBar + tabs: [UITab] 新 API，
+        // 此时 viewControllers 返回 nil，旧路径会直接 guard 退出。
+        // 这里通过 tabs: [UITab] 注册，点击时设置 selectedTab = tab，与 app 端切换方式一致。
+        // id 命名约定与旧路径对齐（index-based + title-based + identifier-based），保证兼容。
+        if #available(iOS 26.0, *), !tabBarController.tabs.isEmpty {
+            let tabs = tabBarController.tabs
+            for (index, tab) in tabs.enumerated() {
+                let rawTitle = tab.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = rawTitle.isEmpty ? "Tab \(index)" : rawTitle
+                var ids = [
+                    "tabbarviewcontroller.tabbar.item\(index)"
+                ]
+
+                if !rawTitle.isEmpty {
+                    ids.append("tabbarviewcontroller.tabbar.\(normalizedComponent(rawTitle))")
+                }
+
+                let tabID = sanitizedID(tab.identifier.trimmingCharacters(in: .whitespacesAndNewlines))
+                if let tabID, !tabID.isEmpty {
+                    ids.append(tabID)
+                }
+
+                for id in Set(ids) {
+                    registry.register(
+                        view: tabBarController.view,
+                        id: id,
+                        type: .button,
+                        label: title
+                    ) { [weak tabBarController, weak tab] in
+                        guard let tabBarController, let tab else { return }
+                        // 对齐旧路径的 delegate 调用：先 shouldSelect 拦截，再切换，再 didSelect 同步业务状态。
+                        // app 端 SystemMainTabBarController 依赖 didSelectTab 做 markChatRead / 通知 parent / 更新 accessibility。
+                        if tabBarController.delegate?.tabBarController?(tabBarController, shouldSelectTab: tab) == false {
+                            return
+                        }
+                        let previousTab = tabBarController.selectedTab
+                        tabBarController.selectedTab = tab
+                        tabBarController.delegate?.tabBarController?(tabBarController, didSelectTab: tab, previousTab: previousTab)
+                    }
+                }
+            }
+            return
+        }
+
         guard let viewControllers = tabBarController.viewControllers else { return }
 
         for (index, target) in viewControllers.enumerated() {
